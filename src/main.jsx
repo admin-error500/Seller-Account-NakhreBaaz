@@ -4,7 +4,7 @@ import './style.css';
 import {supabase,configured,fetchAll,insertEntry} from './supabase';
 const sizes=['14','16','18','20','22','24','26','28','30','32','34','36','38','40','42','44','46','48','S','M','L','XL','XXL','3XL'];
 const channels=['Meesho','Flipkart','Amazon','Direct','Other'];
-const storageKey='nakhrebaaz-seller-hub-v1';
+
 const initial={products:[],purchases:[],sales:[],returns:[],materials:[],materialPurchases:[],production:[],expenses:[],settlements:[]};
 const schemas={
 products:{label:'Products & Stock',fields:{sku:'text',name:'text',size:sizes,color:'text',type:['BLANK','PRINTED']}},
@@ -20,7 +20,7 @@ settlements:{label:'Settlements',fields:{platform:channels,reference:'text',amou
 const today=()=>new Date().toISOString().slice(0,10);
 const rupees=n=>'₹'+(Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const number=n=>Number(n)||0;
-function load(){try{const x=JSON.parse(localStorage.getItem(storageKey));return x&&typeof x==='object'?{...initial,...x}:initial}catch{return initial}}
+
 function App(){
 const [data,setData]=useState(initial),[session,setSession]=useState(null),[loading,setLoading]=useState(true),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[page,setPage]=useState('overview'),[form,setForm]=useState({}),[adding,setAdding]=useState(false),[message,setMessage]=useState('');
 React.useEffect(()=>{if(!configured){setLoading(false);return;}supabase.auth.getSession().then(({data:{session}})=>{setSession(session);setLoading(false)});const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>setSession(session));return()=>subscription.unsubscribe()},[]);
@@ -37,7 +37,7 @@ async function submit(e){e.preventDefault();try{const x={...form};for(const [k,t
 function exportFile(name,content,type){const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 function csv(table){const rows=data[table];if(!rows.length){setMessage('No records to export');return}const keys=[...new Set(rows.flatMap(x=>Object.keys(x)))];const q=v=>'"'+String(v==null?'':typeof v==='object'?JSON.stringify(v):v).replaceAll('"','""')+'"';exportFile(table+'.csv',[keys.join(','),...rows.map(r=>keys.map(k=>q(r[k])).join(','))].join('\r\n'),'text/csv')}
 function restore(e){setMessage('Cloud backup restore is disabled to protect database integrity.');return;
-const file=e.target.files?.[0];if(!file)return;file.text().then(t=>{try{const x=JSON.parse(t);if(!x||!Array.isArray(x.products)||!Array.isArray(x.sales))throw Error('Invalid backup');if(!window.confirm('Replace all local data?'))return;save({...initial,...x});setMessage('Backup restored')}catch(err){setMessage(err.message)}})}
+const file=e.target.files?.[0];if(!file)return;file.text().then(t=>{try{const x=JSON.parse(t);if(!x||!Array.isArray(x.products)||!Array.isArray(x.sales))throw Error('Invalid backup');setMessage('Cloud restore disabled')}catch(err){setMessage(err.message)}})}
 function display(row,k){if(k==='productId'||k==='blankId'||k==='printedId')return productName(row[k]);if(k==='materialId')return data.materials.find(m=>m.id===row[k])?.name||'Unknown';if(k==='saleId')return data.sales.find(s=>s.id===row[k])?.orderId||'Unknown';if(['price','rate','fee','shipping','refund','amount','electricity','otherCost'].includes(k))return rupees(row[k]);return typeof row[k]==='object'?JSON.stringify(row[k]):String(row[k]??'—')}
 if(loading)return <main><h1>Loading Seller Hub...</h1></main>;
 if(!configured)return <main><h1>Supabase configuration required</h1><p>Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel project environment variables.</p></main>;
