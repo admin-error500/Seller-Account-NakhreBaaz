@@ -17,3 +17,5 @@ const {data:parts,error}=await supabase.from('production_materials').select('*')
 export async function insertEntry(t,x){const {data,error}=await supabase.from(dbName(t)).insert(toRow(t,x)).select().single();if(error)throw error;if(t==='production'&&x.consumption?.length){const rows=x.consumption.map(c=>({production_id:data.id,material_id:c.materialId,qty:c.qty}));const res=await supabase.from('production_materials').insert(rows);if(res.error)throw res.error;}return data;}
 
 export async function updateProduct(id,values){const {data,error}=await supabase.from('products').update(values).eq('id',id).select().single();if(error)throw error;return data;}
+
+export async function deleteEntry(t,id){const table=dbName(t);const {data,error}=await supabase.from(table).delete().eq('id',id).select('id');if(error)throw error;if(!data?.length)throw Error('Delete not permitted or record not found');return data[0];}
