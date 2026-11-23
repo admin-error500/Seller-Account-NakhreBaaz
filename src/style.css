@@ -6,3 +6,6 @@
 
 /* Record actions stay in the final column, aligned to the right. */
 .actions-head,.actions-cell{text-align:right;position:sticky;right:0;z-index:1;box-shadow:-8px 0 14px -13px #26374d66}.actions-head{background:#f4f7fb;z-index:2}.actions-cell{background:#fff;min-width:128px}.row-actions{display:flex;justify-content:flex-end;align-items:center;gap:7px;white-space:nowrap}.row-actions button{margin:0;border-radius:7px;padding:7px 10px;font-size:12px;font-weight:600;white-space:nowrap}.row-actions .action-edit{background:#f2f6fb;color:#243d5b;border:1px solid #dce6f1}.row-actions .action-delete{background:#fff5f5;color:#b42318;border:1px solid #f5c6c6}.row-actions .action-delete:hover:not(:disabled){background:#fee4e2;border-color:#fda29b}.row-actions button:disabled{opacity:.5;cursor:not-allowed}@media(max-width:650px){.row-actions{gap:5px}.row-actions button{padding:7px 8px;font-size:11px}}
+
+/* Raw materials: compact unit dropdown with quantity beside it. */
+@media(min-width:651px){.entry-form .fields:has(.material-unit-field){grid-template-columns:minmax(0,1.35fr) minmax(0,1.15fr) minmax(105px,.65fr) minmax(130px,.85fr);gap:18px}.entry-form .fields:has(.material-unit-field) .material-unit-field{grid-column:3}.entry-form .fields:has(.material-unit-field) .material-qty-field{grid-column:4}}
