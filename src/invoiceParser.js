@@ -26,21 +26,52 @@ function amazonItems(text) {
     .filter(item => cents(item.net + item.gst) === cents(item.total));
 }
 
+function amazonDiscountTable(text) {
+  // Amazon may put the description on a different row from the numeric columns.
+  const amount = `${currency}(${numeric})`;
+  const gap = String.raw`[ \t]+`;
+  const row = new RegExp(String.raw`^[ \t]*${amount}${gap}${amount}(?:${gap}(\d+(?:\.\d+)?))?${gap}${amount}${gap}\d+(?:\.\d+)?[ \t]*%${gap}(?:IGST|CGST|SGST|UTGST)${gap}${amount}${gap}${amount}[ \t]*$`, 'gim');
+  const totals = [...text.matchAll(new RegExp(String.raw`^[ \t]*TOTAL[ \t]*:[ \t]*${amount}${gap}${amount}[ \t]*$`, 'gim'))];
+  if (totals.length !== 1) return null;
+  const [tax, total] = totals[0].slice(1).map(value);
+  let itemNumber = 0;
+  const rows = [...text.matchAll(row)].map(match => {
+    const [price, discount, quantity, net, gst, total] = match.slice(1).map(value);
+    let description = '';
+    if (quantity != null) {
+      itemNumber++;
+      const lines = text.slice(0, match.index).trimEnd().split('\n').slice(-8);
+      const label = new RegExp(`^\\s*${itemNumber}(?:[ \\t]+([A-Za-z].*))?\\s*$`);
+      const index = lines.findLastIndex(line => label.test(line));
+      if (index >= 0) {
+        description = lines[index].match(label)[1] ?? lines[index - 1]?.trim() ?? '';
+      }
+    }
+    return {price, discount:Math.abs(discount), quantity, net, gst, total, description};
+  });
+  const sum = key => rows.reduce((result, item) => result + cents(item[key]), 0);
+  if (!rows.length || sum('gst') !== cents(tax) || sum('total') !== cents(total)
+    || rows.some(item => cents(item.net + item.gst) !== cents(item.total)
+      || cents(item.price * (item.quantity ?? 1) - item.discount) !== cents(item.net))) return null;
+  return {tax, total, discount:sum('discount') / 100, products:rows.filter(item => item.quantity != null)};
+}
+
 export function parseInvoice(raw) {
-  const text = raw.normalize('NFKC').replace(/[\r\f]/g, '').replace(/[\u00a0\t]+/g, ' ').replace(/[−–](?=[ \t]*\d)/g, '-');
+  const text = raw.normalize('NFKC').replace(/[\r\f]/g, '').replace(/[\u00a0\t]+/g, ' ').replace(/[−–](?=[ \t]*(?:₹|\d))/g, '-').replace(/-[ \t]*₹/g, '₹-');
   const reference = findText(text, String.raw`Invoice[ \t]*(?:Number|No\.?|#|ID)|Bill[ \t]*(?:No\.?|Number)|Tax Invoice(?=[ \t]*:)`, id);
   const labeledOrder = findText(text, String.raw`(?:Order|Sub[ -]?Order)[ \t]*(?:ID|Number|No\.?)`, id);
   const supplierLine = findText(text, String.raw`Sold[ \t]*By|Supplier(?:[ \t]*Name)?|Seller[ \t]*Name|Billed[ \t]*From|Issued[ \t]*By`, '([^\\n]+)');
   const supplier = supplierLine.split(/\s+(?:GSTIN|PAN|Ship(?:ping)? Address|Registered Office Address)\b|\s*,/i)[0].trim();
-  const gstin = findText(text, String.raw`(?:Supplier[ \t]+|Seller[ \t]+)?GSTIN(?:[ \t]*(?:No\.?|Number))?`, '([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])');
+  const gstin = findText(text, String.raw`(?:Supplier[ \t]+|Seller[ \t]+)?(?:GSTIN(?:[ \t]*(?:No\.?|Number))?|GST[ \t]+Registration[ \t]+(?:No\.?|Number))`, '([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])');
   const platform = /\bflipkart\b|\bOD\d{10,}/i.test(text) ? 'Flipkart'
     : /\bamazon\b|\b\d{3}-\d{7}-\d{7}\b/i.test(text) ? 'Amazon'
       : /\bmeesho\b|\bfashnear\b/i.test(text) ? 'Meesho' : '';
   const orderId = platform === 'Flipkart'
     ? text.match(/\bOD\d{10,}\b/i)?.[0] ?? (/\d/.test(labeledOrder) ? labeledOrder : '')
     : labeledOrder;
+  const amazonTable = platform === 'Amazon' ? amazonDiscountTable(text) : null;
   const amount = findAmount(text, String.raw`Grand[ \t]+Total|Invoice[ \t]+Total|Total[ \t]+Invoice[ \t]+(?:Amount|Value)|Total[ \t]+Payable|Amount[ \t]+Payable`)
-    ?? findAmount(text, String.raw`Total[ \t]+Amount(?:[ \t]+(?:Including|Incl\.?)\s*GST)?|Total`);
+    ?? findAmount(text, String.raw`Total[ \t]+Amount(?:[ \t]+(?:Including|Incl\.?)\s*GST)?|Total`) ?? amazonTable?.total ?? null;
   const taxable = findAmount(text, String.raw`(?:Total[ \t]+)?(?:Taxable[ \t]+(?:Amount|Value)|Subtotal(?:[ \t]+before[ \t]+tax)?)`);
   const totalGst = findAmount(text, String.raw`(?:Total[ \t]+(?:GST|Tax)(?:[ \t]+Amount)?|GST[ \t]+Amount)`);
   const parts = ['CGST', '[SU]GST|UTGST', 'IGST'].map(label =>
@@ -61,15 +92,15 @@ export function parseInvoice(raw) {
   });
   const totalRow = matchingTotals.length === 1 ? matchingTotals[0] : null;
   const componentGst = parts.some(part => part != null) ? parts.reduce((sum, part) => sum + (part ?? 0), 0) : null;
-  const amazon = platform === 'Amazon' ? amazonItems(text) : [];
+  const amazon = platform === 'Amazon' ? amazonTable?.products ?? amazonItems(text) : [];
   const amazonGst = amazon.length && amount != null && amazon.reduce((sum, item) => sum + cents(item.total), 0) === cents(amount)
     ? amazon.reduce((sum, item) => sum + cents(item.gst), 0) / 100 : null;
-  const declaredGst = totalGst ?? totalRow?.[4] ?? componentGst ?? amazonGst;
+  const declaredGst = totalGst ?? totalRow?.[4] ?? componentGst ?? (amazonTable?.total === amount ? amazonTable.tax : null) ?? amazonGst;
   const gst = declaredGst != null && amount != null && declaredGst >= 0 && declaredGst <= amount
     && (taxable == null || Math.abs(cents(taxable + declaredGst) - cents(amount)) <= 1)
     && (totalGst == null || componentGst == null || Math.abs(cents(totalGst) - cents(componentGst)) <= 1)
     ? cents(declaredGst) / 100 : null;
-  const discount = findAmount(text, String.raw`(?:Total[ \t]+)?Discounts?(?:[ \t]*/[ \t]*Coupons?)?(?:[ \t]+(?:Amount|Value))?`) ?? totalRow?.[2] ?? null;
+  const discount = findAmount(text, String.raw`(?:Total[ \t]+)?Discounts?(?:[ \t]*/[ \t]*Coupons?)?(?:[ \t]+(?:Amount|Value))?`) ?? totalRow?.[2] ?? amazonTable?.discount ?? null;
   const feeLabel = /(?:protect promise|handling|platform|convenience|shipping) fee/i;
   const tableItem = text.split('\n').find(line => feeLabel.test(line) && /\d[.,]\d{2}/.test(line));
   const rowProduct = tableRows.map(row => row[1].trim()).join(' / ') || amazon.map(item => item.description).join(' / ');
@@ -85,5 +116,6 @@ export function parseInvoice(raw) {
   const kind = (!multipleProducts && feeLabel.test(product)) || (!product && feeLabel.test(text) && !/\b(?:HSN|SKU|ASIN|FSN)\s*[:#-]?\s*\w{4,}/i.test(text)) ? 'Fee' : 'Product';
   return {reference, orderId, supplier, gstin, platform, product, quantity, unitPrice, gstRate,
     amount, kind, gst, discount: discount == null ? null : Math.abs(discount),
+    productDiscount: amazonTable?.products.length === 1 ? amazonTable.products[0].discount : null,
     multipleProducts, reviewRequired: true};
 }
