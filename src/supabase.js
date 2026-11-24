@@ -35,9 +35,9 @@ export async function updateProduct(id,values){const {data,error}=await supabase
 
 export async function deleteEntry(t,id){const table=dbName(t);const {data,error}=await supabase.from(table).delete().eq('id',id).select('id');if(error)throw error;if(!data?.length)throw Error('Delete not permitted or record not found');return data[0];}
 
-export async function updatePurchaseInvoices(table, purchase, invoiceDetails, actualPayment) {
+export async function updatePurchaseInvoices(table, purchase, invoiceDetails, actualPayment, supplier) {
   const {data, error} = await supabase.from(dbName(table))
-    .update({invoice_details: invoiceDetails, actual_payment: actualPayment})
+    .update({invoice_details: invoiceDetails, actual_payment: actualPayment, ...(supplier!==undefined&&{supplier})})
     .eq('id', purchase.id)
     .eq('invoice_revision', purchase.invoiceRevision)
     .select()

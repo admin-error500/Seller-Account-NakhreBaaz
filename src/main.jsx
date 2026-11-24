@@ -1,9 +1,10 @@
+import {isAddressHeading} from './invoiceParser.js';
 import PurchaseInvoices from './PurchaseInvoices.jsx';
 import {purchasePages, purchaseDetails, purchaseTotals, parseMoney, taxDetails, number, money, normalizeInvoiceKey} from './purchaseReconciliation.js';
 import {prepareInvoices, uploadInvoices, discardInvoiceUploads, invoiceSaveError, isDefinitiveWriteError} from './purchaseInvoiceStorage.js';
 import React,{useState,useMemo,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Eye, FilePlus, FileCheck, Upload} from 'lucide-react';
+import {Eye, FilePlus, FileCheck, Upload, Pencil} from 'lucide-react';
 import './style.css';
 import {supabase,configured,fetchAll,insertEntry,updateProduct,deleteEntry,updatePurchaseInvoices,fromRow,findPurchase,insertPurchase} from './supabase';
 const sizes=['14','16','18','20','22','24','26','28','30','32','34','36','38','40','42','44','46','48','S','M','L','XL','XXL','3XL'];
@@ -67,6 +68,8 @@ function PurchaseInvoiceActions({row,saving,viewInvoice,openAttachment}) {
       <InvoiceAction key={index} icon={invoice.verified?Upload:FileCheck}
         label={`${invoice.verified?'Upload file':'Verify invoice'} ${invoice.reference}`}
         disabled={saving} onClick={()=>openAttachment(row,index)}/>:null)}
+    {isAddressHeading(row.supplier)&&<InvoiceAction icon={Pencil} label="Correct supplier name"
+      disabled={saving} onClick={()=>openAttachment(row,null,true)}/>}
     <InvoiceAction icon={FilePlus} label="Add invoices" disabled={saving} onClick={()=>openAttachment(row)}/>
   </>;
 }
@@ -150,12 +153,12 @@ function applyInvoice(line, automatic=false) {
     value!==''&&value!=null&&(!automatic||current[key]==null||current[key]==='')))}));
 }
 
-function openAttachment(row, legacyIndex) {
+function openAttachment(row, legacyIndex, supplierOnly=false) {
   const existing=legacyIndex==null?null:legacyIndex===-1
     ? {kind:'Product',reference:row.invoice,path:row.invoicePath}
     : row.invoiceDetails[legacyIndex];
-  setAttachment({page,row,editorId:crypto.randomUUID(),actualPayment:String(purchaseDetails(row).paid)});
-  setInvoiceLines([{
+  setAttachment({page,row,supplierOnly,supplier:'',editorId:crypto.randomUUID(),actualPayment:String(purchaseDetails(row).paid)});
+  setInvoiceLines(supplierOnly?[]:[{
     ...existing,id:crypto.randomUUID(),kind:existing?.kind??'Product',
     supplier:existing?.supplier??row.supplier??'',
     ...(existing?.kind==='Product'&&!existing.verified&&{amount:'',gst:''}),
@@ -172,16 +175,23 @@ async function submitAttachment(event) {
   let committed=false;
   let writeStarted=false;
   try {
-    const actualPayment=parseMoney(attachment.actualPayment,'actual payment');
-    const invoices=await prepareInvoices(invoiceLines,attachment.row.invoiceDetails??[]);
-    const uploaded=await uploadInvoices(invoices,session.user.id,paths);
+    const {row,supplierOnly}=attachment;
+    const supplier=supplierOnly?attachment.supplier.trim():undefined;
+    if (supplierOnly&&(!supplier||isAddressHeading(supplier))) throw Error('Enter the supplier name shown under Sold By.');
+    const actualPayment=supplierOnly?row.actualPayment??null:parseMoney(attachment.actualPayment,'actual payment');
+    const existing=row.invoiceDetails??[];
+    const invoices=supplierOnly?existing.map(invoice=>
+      invoice.verified===true&&invoice.kind==='Product'&&isAddressHeading(invoice.supplier)&&
+      normalizeInvoiceKey(invoice.reference)===normalizeInvoiceKey(row.invoice)?{...invoice,supplier}:invoice)
+      :await prepareInvoices(invoiceLines,existing);
+    const uploaded=supplierOnly?invoices:await uploadInvoices(invoices,session.user.id,paths);
     writeStarted=true;
-    const updated=await updatePurchaseInvoices(page,attachment.row,uploaded,actualPayment);
+    const updated=await updatePurchaseInvoices(page,row,uploaded,actualPayment,supplier);
     committed=true;
     setData(previous=>({...previous,[page]:previous[page].map(row=>row.id===updated.id?updated:row)}));
     setAttachment(null);
     setInvoiceLines([]);
-    setMessage('Purchase reconciliation updated.');
+    setMessage(supplierOnly?'Supplier name corrected.':'Purchase reconciliation updated.');
   } catch (error) {
     if (!committed&&(!writeStarted||isDefinitiveWriteError(error))) await discardInvoiceUploads(paths);
     if (/This purchase changed/.test(error.message)) {
@@ -332,14 +342,17 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
       <b>{rupees(purchasePreview.mismatch||purchasePreview.pending)}</b></div>}
   </div>
 </>}{isTaxPage&&(!isPurchase||!hasProductInvoice)&&<div className="tax-summary"><strong>{isPurchase?'Item GST estimate before discounts':'Automatic GST calculation'}</strong><div><span>Taxable value</span><b>{rupees(taxPreview.base)}</b></div><div><span>GST ({number(form.gstRate)}%)</span><b>{rupees(taxPreview.tax)}</b></div><div className="tax-total"><span>{isPurchase?'Estimated item subtotal before discounts':'Customer total'}</span><b>{rupees(taxPreview.total)}</b></div><small>Check invoice and applicable GST rate. GST reporting and input tax credit eligibility require accountant review.</small></div>}{page==='production'&&data.materials.map(m=><label key={m.id}>Consume {m.name} ({m.unit})<input type="number" min="0" step="0.001" value={form['consume_'+m.id]||''} onChange={e=>setForm({...form,['consume_'+m.id]:e.target.value})}/></label>)}</div><div className="form-actions"><button className="primary" type="submit" disabled={saving||invoiceLines.some(line=>line.reading)}>{saving?'Saving...':'Save Entry'}</button><button type="button" onClick={()=>setAdding(false)}>Cancel</button></div></form>}{attachmentOpen&&<form className="entry-form" ref={attachmentForm} onSubmit={submitAttachment}>
-  <div className="form-heading"><h2>Add or verify invoices</h2>
+  <div className="form-heading"><h2>{attachment.supplierOnly?'Correct supplier name':'Add or verify invoices'}</h2>
     <p>{attachment.row.name||attachment.row.supplier||display(attachment.row,page==='purchases'?'productId':'materialId')} · {attachment.row.date}</p>
   </div>
+  {attachment.supplierOnly?<div className="fields"><label>Supplier name<input required maxLength={250}
+    value={attachment.supplier} onChange={event=>setAttachment({...attachment,supplier:event.target.value})}/></label></div>:<>
   <div className="fields"><label>Actual payment (₹)<input required min="0" step="0.01" type="number"
     value={attachment.actualPayment} onChange={event=>setAttachment({...attachment,actualPayment:event.target.value})}/></label></div>
   <PurchaseInvoices key={attachment.editorId} lines={invoiceLines} setLines={setInvoiceLines} saving={saving} viewInvoice={viewInvoice}/>
+  </>}
   <div className="form-actions"><button type="submit" className="primary"
-    disabled={saving||invoiceLines.some(line=>line.reading)}>Save reconciliation</button>
+    disabled={saving||invoiceLines.some(line=>line.reading)}>{attachment.supplierOnly?'Save supplier name':'Save reconciliation'}</button>
     <button type="button" disabled={saving} onClick={()=>{setAttachment(null);setInvoiceLines([])}}>Cancel</button></div>
 </form>}<section><div className="toolbar"><h2>Entries ({data[page].length})</h2><button onClick={()=>csv(page)}>Export CSV</button></div><div className="tablewrap"><table><thead><tr>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><th key={k}>{purchaseFieldLabel(k)}</th>)}{page==='materialPurchases'&&<th>Material</th>}{['products','materials'].includes(page)&&<th>Available</th>}{isPurchase&&<th>Invoices / Order</th>}{isPurchase&&<><th>Actual payment</th><th>Received invoice total</th><th>Documented GST</th><th>Reconciliation</th></>}
 {page==='sales'&&<><th>GST Amount</th><th>Total Incl. GST</th></>}{(page==='products'||isPurchase||isAdmin)&&<th className="actions-head">Actions</th>}</tr></thead><tbody>{[...data[page]].reverse().map(row=><tr key={row.id}>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><td key={k}>{display(row,k)}</td>)}{page==='materialPurchases'&&<td>{display(row,'materialId')}</td>}{page==='products'&&<td>{number(stock[row.id])}</td>}{page==='materials'&&<td>{number(materialStock[row.id])}</td>}{isPurchase&&<td className="invoice-cell">

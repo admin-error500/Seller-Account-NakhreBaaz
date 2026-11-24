@@ -27,6 +27,20 @@ function pdfText(items) {
     .map(([, items]) => items.sort(([a], [b]) => a - b).map(([, content]) => content).join(' ')).join('\n');
 }
 
+function sellerColumnText(items) {
+  const seller = items.find(item => /^sold[ \t]+by\s*:/i.test(item.str?.trim()));
+  if (!seller) return '';
+  const [, , , , x, y] = seller.transform;
+  const billing = items.find(item => /^billing[ \t]+address\s*:/i.test(item.str?.trim())
+    && item.transform[4] > x && Math.abs(item.transform[5]-y) < 6);
+  if (!billing) return '';
+  const right = (x + billing.transform[4]) / 2;
+  return pdfText(items.filter(item => {
+    const [, , , , left, baseline] = item.transform;
+    return left >= x-3 && left < right && baseline <= y+3 && baseline >= y-130;
+  }));
+}
+
 export async function readInvoice(file) {
   const type = invoiceFileType(file);
   let workerPromise;
@@ -46,9 +60,12 @@ export async function readInvoice(file) {
       const doc = await task.promise;
       if (doc.numPages > MAX_PAGES) throw Error('Automatic reading supports invoices up to 20 pages.');
       const pages = [];
+      let sellerColumn = '';
       for (let index = 1; index <= doc.numPages; index++) {
         const page = await doc.getPage(index);
-        const content = pdfText((await page.getTextContent()).items);
+        const {items} = await page.getTextContent();
+        sellerColumn ||= sellerColumnText(items);
+        const content = pdfText(items);
         if ((content.match(/[A-Za-z0-9]/g)?.length ?? 0) >= 50) {
           pages.push(content);
           continue;
@@ -65,7 +82,7 @@ export async function readInvoice(file) {
           canvas.width = canvas.height = 0;
         }
       }
-      return parseInvoice(pages.join('\n'));
+      return parseInvoice(pages.join('\n'), sellerColumn);
     } finally {
       await task.destroy();
     }

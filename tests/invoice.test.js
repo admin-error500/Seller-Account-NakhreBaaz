@@ -158,3 +158,10 @@ test('reads a standalone delivery invoice with decimal quantity and no grand tot
     [1223,58.24,1,1223,'Delivery Charges','Fee',5]);
   assert.equal(parseInvoice(text.replace(/Total 1.0[^\n]+/, 'Total 1.0 ₹1223.00 ₹1164.76 ₹1.00 ₹1223.00')).amount, null);
 });
+
+test('uses the seller column and discards the Amazon billing heading', () => {
+  const combined = 'Amazon\nSold By : Billing Address :\nExample Seller Private Buyer Name\nLIMITED Buyer Address';
+  assert.equal(parseInvoice(combined).supplier,'');
+  assert.equal(parseInvoice(combined,'Sold By :\nExample Seller Private\nLIMITED').supplier,'Example Seller Private LIMITED');
+  assert.equal(parseInvoice('Amazon\nSold By: Example Seller Billing Address:').supplier,'Example Seller');
+});
