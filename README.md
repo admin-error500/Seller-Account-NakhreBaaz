@@ -45,3 +45,11 @@ The browser tests use a mocked Supabase API and exercise the production build, P
 1. `tests/invoice-migration-fixture.sql`
 2. `supabase/migrations/20261124043313_smart_invoice_reconciliation.sql`
 3. `tests/invoice-migration-test.sql`
+
+## Supplier advances
+
+Record the supplier, amount, payment date and optional reference in **Supplier Advances**. After saving the purchase and verifying its invoices, choose **Apply supplier advance** in the purchase row actions. The supplier names must match. Enter direct purchase payments separately when recording the purchase. Enter 0 if the advance is the only payment so far.
+
+The purchase shows the applied amount and remaining bill balance. Monthly cash movement counts an advance on its payment date and direct purchase payments on the purchase date. Applying an advance does not change stock or record another cash payment.
+
+Apply all files in `supabase/migrations/` in order before deploying Supplier Advances. To validate against the disposable PostgreSQL fixture above, apply the supplier advances migration after the reconciliation migration, then run `tests/advance-migration-test.sql`.

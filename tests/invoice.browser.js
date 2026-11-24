@@ -58,7 +58,7 @@ async function openPurchasePage(page, name) {
 }
 
 async function useSellerApi(page, equipmentPurchases = []) {
-  const db = {products:[{id:sku,sku:'PLAIN-M',name:'Plain T-Shirt',size:'M',color:'Black',type:'BLANK'}],purchases:[],material_purchases:[],equipment_purchases:equipmentPurchases};
+  const db = {products:[{id:sku,sku:'PLAIN-M',name:'Plain T-Shirt',size:'M',color:'Black',type:'BLANK'}],purchases:[],material_purchases:[],equipment_purchases:equipmentPurchases,supplier_advances:[],supplier_advance_allocations:[]};
   const uploads = [];
   const user = {id:seller,email:'seller@example.test',app_metadata:{seller_role:'admin'},user_metadata:{}};
   const session = {access_token:'browser-test',refresh_token:'browser-test',
@@ -77,6 +77,10 @@ async function useSellerApi(page, equipmentPurchases = []) {
     }
     if (request.method()==='GET') return result(list);
     const payload = request.postDataJSON();
+    if (request.method()==='POST' && ['supplier_advances','supplier_advance_allocations'].includes(table)) {
+      list.push(payload);
+      return result(payload,201);
+    }
     if (request.method()==='POST' && ['purchases','equipment_purchases','record_material_purchase'].includes(table)) {
       const row={...(payload.purchase??payload),invoice_revision:0};
       if (table==='record_material_purchase') {
@@ -392,4 +396,39 @@ test('corrects a stored billing heading without changing the purchase amounts or
   expect(db.equipment_purchases[0]).toMatchObject({supplier:'Example Seller Private Limited',qty:1,actual_payment:500,
     invoice_details:[{supplier:'Example Seller Private Limited',amount:500,gst:76.27,path:'test/original.pdf'}]});
   expect(uploads).toEqual([]);
+});
+
+test('records and applies an advance once, separating invoice verification from payment due', async ({page}) => {
+  const date = new Date().toISOString().slice(0,10);
+  const {db} = await useSellerApi(page,[{
+    id:'1',name:'Printer',supplier:'Acme',invoice:'A-1',actual_payment:0,qty:1,purchased_on:date,invoice_revision:0,
+    invoice_details:[{reference:'A-1',supplier:'Acme',verified:true,kind:'Product',amount:10000,gst:0,path:'test/printer.pdf'}],
+  }]);
+  await page.getByRole('button',{name:'Supplier Advances',exact:true}).click();
+  await page.getByLabel('Supplier name').fill('Acme');
+  await page.getByLabel('Advance paid (₹)',{exact:true}).fill('4000');
+  await page.getByLabel('Payment date').fill(date);
+  await page.getByRole('button',{name:'Record advance',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Unused supplier advances · ₹4,000.00'})).toBeVisible();
+  await page.getByRole('button',{name:'Overview',exact:true}).click();
+  await expect(page.getByText('Unused advances ₹4,000.00')).toBeVisible();
+  await openPurchasePage(page,'Machines & Equipment');
+  await page.getByRole('button',{name:'Apply supplier advance',exact:true}).click();
+  await expect(page.getByLabel('Amount to apply (₹)')).toHaveValue('4000');
+  await page.getByRole('button',{name:'Apply advance',exact:true}).click();
+  await expect(page.locator('.invoice-status-ok')).toContainText('Invoice verified');
+  await expect(page.getByText('Advance applied ₹4,000.00',{exact:true})).toBeVisible();
+  await expect(page.getByText('Balance due ₹6,000.00',{exact:true})).toBeVisible();
+  expect(db.equipment_purchases).toHaveLength(1);
+  expect(db.equipment_purchases[0]).toMatchObject({qty:1,actual_payment:0});
+  expect(db.supplier_advance_allocations).toHaveLength(1);
+  await page.getByRole('button',{name:'Overview',exact:true}).click();
+  await expect(page.getByText('Total Purchase Payments').locator('..')).toContainText('₹4,000.00');
+  await expect(page.getByText('Invoice amount mismatch',{exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Monthly Business Report',exact:true}).click();
+  await page.getByLabel('Report Month').fill(date.slice(0,7));
+  await expect(page.getByRole('row').filter({hasText:'Supplier advances paid'})).toContainText('₹4,000.00');
+  await expect(page.getByRole('row').filter({hasText:'Equipment purchase payments'})).toContainText('₹0.00');
+  await page.getByRole('button',{name:'Supplier Advances',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Unused supplier advances · ₹0.00'})).toBeVisible();
 });

@@ -1,16 +1,18 @@
+import SupplierAdvances,{ApplyAdvance} from './SupplierAdvances.jsx';
+import {advanceBalances,advancePurchaseFields,purchasesWithAdvances,canApplyAdvance} from './supplierAdvances.js';
 import {isAddressHeading} from './invoiceParser.js';
 import PurchaseInvoices from './PurchaseInvoices.jsx';
 import {purchasePages, purchaseDetails, purchaseTotals, parseMoney, taxDetails, number, money, normalizeInvoiceKey} from './purchaseReconciliation.js';
 import {prepareInvoices, uploadInvoices, discardInvoiceUploads, invoiceSaveError, isDefinitiveWriteError} from './purchaseInvoiceStorage.js';
 import React,{useState,useMemo,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Eye, FilePlus, FileCheck, Upload, Pencil} from 'lucide-react';
+import {Eye, FilePlus, FileCheck, Upload, Pencil, Wallet} from 'lucide-react';
 import './style.css';
 import {supabase,configured,fetchAll,insertEntry,updateProduct,deleteEntry,updatePurchaseInvoices,fromRow,findPurchase,insertPurchase} from './supabase';
 const sizes=['14','16','18','20','22','24','26','28','30','32','34','36','38','40','42','44','46','48','S','M','L','XL','XXL','3XL'];
 const channels=['Meesho','Flipkart','Amazon','Direct','Other'];
 
-const initial={products:[],purchases:[],sales:[],returns:[],materials:[],materialPurchases:[],production:[],expenses:[],settlements:[],equipmentPurchases:[],stockAdjustments:[]};
+const initial={products:[],purchases:[],sales:[],returns:[],materials:[],materialPurchases:[],production:[],expenses:[],settlements:[],equipmentPurchases:[],stockAdjustments:[],supplierAdvances:[],supplierAdvanceAllocations:[]};
 const schemas={
 products:{label:'Products & Stock',fields:{sku:'text',name:'text',size:sizes,color:'text',type:['BLANK','PRINTED']}},
 purchases:{label:'T-Shirt Purchases',fields:{productId:'product',qty:'number',rate:'number',gstRate:[0,3,5,12,18,28,40],gstInclusive:['No','Yes'],supplier:'text',invoice:'text',date:'date'}},
@@ -42,7 +44,7 @@ function InvoiceStatus({row}) {
           : status==='Mismatch'?'Amount mismatch':'';
   return <span className={`invoice-status ${reason?'invoice-status-error':'invoice-status-ok'}`}>
     <span aria-hidden="true">{reason?'✕':'✓'}</span>
-    {reason||'Verified & matched'}
+    {reason||(status==='Invoice verified'?'Invoice verified':'Verified & matched')}
   </span>;
 }
 function InvoiceAction({icon:Icon,label,onClick,disabled}) {
@@ -53,7 +55,7 @@ function InvoiceAction({icon:Icon,label,onClick,disabled}) {
   </button>;
 }
 
-function PurchaseInvoiceActions({row,saving,viewInvoice,openAttachment}) {
+function PurchaseInvoiceActions({row,saving,viewInvoice,openAttachment,openAdvance}) {
   const invoices=row.invoiceDetails??[];
   const attachments=new Map(invoices.filter(invoice=>invoice.path).map(invoice=>[invoice.path,invoice.reference]));
   if (row.invoicePath&&!attachments.has(row.invoicePath)) attachments.set(row.invoicePath,row.invoice);
@@ -70,8 +72,15 @@ function PurchaseInvoiceActions({row,saving,viewInvoice,openAttachment}) {
         disabled={saving} onClick={()=>openAttachment(row,index)}/>:null)}
     {isAddressHeading(row.supplier)&&<InvoiceAction icon={Pencil} label="Correct supplier name"
       disabled={saving} onClick={()=>openAttachment(row,null,true)}/>}
+    {canApplyAdvance(row)&&advanceDue(row)>0&&
+      <InvoiceAction icon={Wallet} label="Apply supplier advance" disabled={saving} onClick={()=>openAdvance(row)}/>}
     <InvoiceAction icon={FilePlus} label="Add invoices" disabled={saving} onClick={()=>openAttachment(row)}/>
   </>;
+}
+
+function advanceDue(row) {
+  const {invoiceTotal,paid}=purchaseDetails(row);
+  return Math.max(0,money(invoiceTotal-paid-number(row.advanceApplied)));
 }
 
 function PurchaseAmounts({row}) {
@@ -79,11 +88,16 @@ function PurchaseAmounts({row}) {
   return <><td>{rupees(amounts.paid)}{!amounts.hasActualPayment&&<small className="legacy-payment">Legacy estimate</small>}</td>
     <td>{rupees(amounts.invoiceTotal)}</td><td>{rupees(amounts.tax)}</td>
     <td><strong>{amounts.status}</strong>{(amounts.pending>0||amounts.mismatch>0)&&
-      <small className="legacy-payment">{rupees(amounts.mismatch||amounts.pending)}</small>}</td></>;
+      <small className="legacy-payment">{rupees(amounts.mismatch||amounts.pending)}</small>}
+    {amounts.advanceApplied>0&&<>
+      <small className="legacy-payment">Advance applied {rupees(amounts.advanceApplied)}</small>
+      <small className="legacy-payment">Balance due {rupees(amounts.due)}</small>
+    </>}</td></>;
 }
 function App(){
 const [invoiceLines,setInvoiceLines]=useState([]);
 const [attachment,setAttachment]=useState(null);
+const [advanceTarget,setAdvanceTarget]=useState(null);
 const purchaseDraftId=useRef(null);
 const attachmentForm=useRef(null);const [editingProduct,setEditingProduct]=useState(null),[adjustingProduct,setAdjustingProduct]=useState(null),[adjustQty,setAdjustQty]=useState(''),[adjustReason,setAdjustReason]=useState('Stock count correction'),[reportMonth,setReportMonth]=useState(today().slice(0,7)),[saving,setSaving]=useState(false),[data,setData]=useState(initial),[session,setSession]=useState(null),[loading,setLoading]=useState(true),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[page,setPage]=useState('overview'),[form,setForm]=useState({}),[adding,setAdding]=useState(false),[message,setMessage]=useState('');
 React.useEffect(()=>{if(!configured){setLoading(false);return;}supabase.auth.getSession().then(({data:{session}})=>{setSession(session);setLoading(false)});const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>setSession(session));return()=>subscription.unsubscribe()},[]);
@@ -115,23 +129,37 @@ const hasProductInvoice=previewInvoices.some(line=>line.kind==='Product');
 const feeInvoiceTotal=money(previewInvoices.filter(line=>line.kind==='Fee')
   .reduce((total,line)=>total+number(line.amount),0));
 const purchaseFieldLabel=key=>isPurchase&&key==='rate'?'Item unit price before discount (₹)':fieldLabel(key);
-const overviewPurchases=purchaseTotals(purchasePages.flatMap(key=>data[key]));
+const advances=advanceBalances(data.supplierAdvances,data.supplierAdvanceAllocations);
+const purchaseRecords=Object.fromEntries(purchasePages.map(key=>
+  [key,purchasesWithAdvances(data[key],key,data.supplierAdvanceAllocations)]));
+const overviewPurchases=purchaseTotals(Object.values(purchaseRecords).flat());
+const advancePaid=money(advances.reduce((sum,row)=>sum+number(row.amount),0));
+const unusedAdvances=money(advances.reduce((sum,row)=>sum+row.remaining,0));
+const addAdvanceRecord=(key,row)=>setData(previous=>({...previous,
+  [key]:[...previous[key].filter(entry=>entry.id!==row.id),row]}));
+const openAdvance=row=>{
+  setAdding(false);
+  setAttachment(null);
+  setAdvanceTarget(row);
+  setMessage('');
+};
 const attachmentOpen=attachment?.page===page&&!adding;
 React.useEffect(()=>{
   if (attachmentOpen) attachmentForm.current?.scrollIntoView({block:'nearest'});
 },[attachmentOpen,attachment?.row.id]);
 const taxPreview=isTaxPage?taxDetails(form.qty,form[page==='sales'?'price':'rate'],form.gstRate,form.gstInclusive==='Yes'):null;
 const monthly=(items)=>items.filter(x=>String(x.date||'').slice(0,7)===reportMonth);
-const mSales=monthly(data.sales),mPurchases=monthly(data.purchases),mMaterials=monthly(data.materialPurchases),mEquipment=monthly(data.equipmentPurchases),mReturns=monthly(data.returns),mExpenses=monthly(data.expenses),mSettlements=monthly(data.settlements),mProduction=monthly(data.production);
+const mSales=monthly(data.sales),mPurchases=monthly(purchaseRecords.purchases),mMaterials=monthly(purchaseRecords.materialPurchases),mEquipment=monthly(purchaseRecords.equipmentPurchases),mReturns=monthly(data.returns),mExpenses=monthly(data.expenses),mSettlements=monthly(data.settlements),mProduction=monthly(data.production);
 const sum=(items,fn)=>money(items.reduce((a,x)=>a+fn(x),0));
 const saleTotal=sum(mSales,x=>taxDetails(x.qty,x.price,x.gstRate,x.gstInclusive).total),saleTax=sum(mSales,x=>taxDetails(x.qty,x.price,x.gstRate,x.gstInclusive).tax),purchaseTotal=sum(mPurchases,x=>purchaseDetails(x).paid),materialTotal=sum(mMaterials,x=>purchaseDetails(x).paid),equipmentTotal=sum(mEquipment,x=>purchaseDetails(x).paid),refundTotal=sum(mReturns,x=>number(x.refund)),feeTotal=sum(mSales,x=>number(x.fee)+number(x.shipping)),expenseTotal=sum(mExpenses,x=>number(x.amount)),productionCost=sum(mProduction,x=>number(x.electricity)+number(x.otherCost)),settledTotal=sum(mSettlements,x=>number(x.amount));
-const cashEstimate=money(saleTotal-refundTotal-purchaseTotal-materialTotal-equipmentTotal-feeTotal-expenseTotal-productionCost);
+const monthlyAdvancesPaid=sum(monthly(advances),row=>number(row.amount));
+const cashEstimate=money(saleTotal-refundTotal-purchaseTotal-materialTotal-equipmentTotal-monthlyAdvancesPaid-feeTotal-expenseTotal-productionCost);
 const monthPurchases=purchaseTotals([...mPurchases,...mMaterials,...mEquipment]);
 const reconciliationRows=totals=>[
   ['Received invoice total',totals.invoiceTotal],['Documented purchase GST',totals.tax],
   ['Pending purchase reconciliation',totals.pending],['Purchase invoice amount above payment',totals.mismatch],
 ];
-const monthlyReportRows=[['Gross sales (customer billed)',saleTotal],['GST collected on sales (recorded)',saleTax],['T-shirt purchase payments',purchaseTotal],['Material purchase payments',materialTotal],['Equipment purchase payments',equipmentTotal],...reconciliationRows(monthPurchases),['Purchase GST recorded (including legacy estimates)',monthPurchases.recordedTax],['Customer refunds',refundTotal],['Marketplace fees + shipping',feeTotal],['Other expenses',expenseTotal],['Production electricity + other costs',productionCost],['Marketplace settlements received',settledTotal],['Estimated cash movement (not profit)',cashEstimate]];
+const monthlyReportRows=[['Gross sales (customer billed)',saleTotal],['GST collected on sales (recorded)',saleTax],['T-shirt purchase payments',purchaseTotal],['Material purchase payments',materialTotal],['Equipment purchase payments',equipmentTotal],['Supplier advances paid',monthlyAdvancesPaid],...reconciliationRows(monthPurchases),['Purchase GST recorded (including legacy estimates)',monthPurchases.recordedTax],['Customer refunds',refundTotal],['Marketplace fees + shipping',feeTotal],['Other expenses',expenseTotal],['Production electricity + other costs',productionCost],['Marketplace settlements received',settledTotal],['Estimated cash movement (not profit)',cashEstimate]];
 
 function applyInvoice(line, automatic=false) {
   if (line.kind!=='Product') return;
@@ -154,6 +182,7 @@ function applyInvoice(line, automatic=false) {
 }
 
 function openAttachment(row, legacyIndex, supplierOnly=false) {
+  setAdvanceTarget(null);
   const existing=legacyIndex==null?null:legacyIndex===-1
     ? {kind:'Product',reference:row.invoice,path:row.invoicePath}
     : row.invoiceDetails[legacyIndex];
@@ -289,7 +318,7 @@ if(!configured)return <main><h1>Supabase configuration required</h1><p>Set VITE_
 if(!session)return <main className="login"><h1>NAKHREBAAZ Seller Hub</h1><p>Secure admin sign in</p><form onSubmit={async e=>{e.preventDefault();const {error}=await supabase.auth.signInWithPassword({email,password});if(error)setMessage(error.message)}}><label>Email<input type="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" required value={password} onChange={e=>setPassword(e.target.value)}/></label><button className="primary">Sign in</button>{message&&<p>{message}</p>}</form></main>;
 const entryNav=(key,label)=><button key={key} className={page===key?'active':''}
   aria-current={page===key?'page':undefined}
-  onClick={()=>{setPage(key);setAdding(false);setAttachment(null);setMessage('')}}>{label}</button>;
+  onClick={()=>{setPage(key);setAdding(false);setAttachment(null);setAdvanceTarget(null);setMessage('')}}>{label}</button>;
 return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h2><nav>
   {entryNav('overview','Overview')}
   {Object.entries(schemas).filter(([key])=>key!=='materials').map(([key,entry])=>
@@ -297,17 +326,20 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
       <summary className={purchasePages.includes(page)?'active':undefined}>Purchases</summary>
       <div>{purchasePages.map(category=>entryNav(category,schemas[category].label))}</div>
     </details>:purchasePages.includes(key)?null:entryNav(key,entry.label))}
+  {entryNav('advances','Supplier Advances')}
   {entryNav('monthly','Monthly Business Report')}
   {entryNav('reports','Reports & Backup')}
-</nav><button onClick={()=>supabase.auth.signOut()}>Sign out</button><p className="aside-note">Supabase cloud workspace</p></aside><main><header><span>NAKHREBAAZ · MULTI-CHANNEL OPERATIONS</span><h1>{schemas[page]?.label|| (page==='overview'?'Overview':page==='monthly'?'Monthly Business Report':'Reports & Backup')}</h1><p>Meesho · Flipkart · Amazon · Direct</p></header>{message&&<div className="notice"><span role="status">{message}</span><button type="button" aria-label="Dismiss message" onClick={()=>setMessage('')}>×</button></div>}
+</nav><button onClick={()=>supabase.auth.signOut()}>Sign out</button><p className="aside-note">Supabase cloud workspace</p></aside><main><header><span>NAKHREBAAZ · MULTI-CHANNEL OPERATIONS</span><h1>{schemas[page]?.label|| (page==='overview'?'Overview':page==='advances'?'Supplier Advances':page==='monthly'?'Monthly Business Report':'Reports & Backup')}</h1><p>Meesho · Flipkart · Amazon · Direct</p></header>{message&&<div className="notice"><span role="status">{message}</span><button type="button" aria-label="Dismiss message" onClick={()=>setMessage('')}>×</button></div>}
 {page==='overview'&&<>
   <div className="stats overview-stats">{[
     ['Gross Sales',rupees(gross)],
-    ['Total Purchase Payments',rupees(overviewPurchases.paid)],
+    ['Total Purchase Payments',rupees(overviewPurchases.paid+advancePaid)],
     ['Pending Invoice Reconciliation',rupees(overviewPurchases.pending)],
     ['Settlements Received',rupees(received)],
     ['Stock Units',Object.values(stock).reduce((total,units)=>total+units,0)],
-  ].map(([label,value])=><article key={label}><small>{label}</small><strong>{value}</strong></article>)}</div>
+  ].map(([label,value])=><article key={label}><small>{label}</small><strong>{value}</strong>
+    {label==='Total Purchase Payments'&&unusedAdvances>0&&<small>Unused advances {rupees(unusedAdvances)}</small>}
+  </article>)}</div>
   {overviewPurchases.mismatch>0&&<div className="notice" role="status">
     <span><strong>Invoice amount mismatch</strong> · Invoices exceed recorded payments by {rupees(overviewPurchases.mismatch)}.</span>
   </div>}
@@ -319,7 +351,7 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
     {!data.products.length&&<p>No products yet.</p>}
   </section>
 </>}
-{page==='products'&&editingProduct&&<form className="entry-form" onSubmit={submitProductEdit}><h2>Edit Product</h2><div className="fields">{Object.entries(schemas.products.fields).map(([k,t])=><label key={k}>{fieldLabel(k)}{Array.isArray(t)?<select required value={editingProduct[k]} onChange={e=>setEditingProduct({...editingProduct,[k]:e.target.value})}>{t.map(v=><option key={v} value={v}>{v}</option>)}</select>:<input required value={editingProduct[k]??''} onChange={e=>setEditingProduct({...editingProduct,[k]:e.target.value})}/>}</label>)}</div><div className="form-actions"><button className="primary" disabled={saving}>Save Changes</button><button type="button" onClick={()=>setEditingProduct(null)}>Cancel</button></div></form>}{page==='products'&&adjustingProduct&&<form className="entry-form" onSubmit={submitStockAdjustment}><h2>Adjust Stock — {productName(adjustingProduct.id)}</h2><p>Current stock: <strong>{number(stock[adjustingProduct.id])}</strong> units. Enter the correct total stock. A signed adjustment is recorded; purchases and sales are not overwritten.</p><div className="fields"><label>Correct Stock Quantity<input required type="number" min="0" step="1" value={adjustQty} onChange={e=>setAdjustQty(e.target.value)}/></label><label>Reason<select required value={adjustReason} onChange={e=>setAdjustReason(e.target.value)}>{['Stock count correction','Opening stock','Damaged stock','Lost stock','Other adjustment'].map(x=><option key={x}>{x}</option>)}</select></label></div><div className="form-actions"><button className="primary" disabled={saving}>Save Stock Adjustment</button><button type="button" onClick={()=>setAdjustingProduct(null)}>Cancel</button></div></form>}{fields&&<><div className="toolbar"><p>Manage records for {schemas[page].label}.</p><button className="primary" onClick={()=>{setAdding(!adding);purchaseDraftId.current=null;setAttachment(null);setForm({});setInvoiceLines([])}}>+ Add Entry</button></div>{adding&&<form className="entry-form" onSubmit={submit}><div className="form-heading"><h2>{page==='purchases'?'Add T-Shirt Purchase':page==='materialPurchases'?'Add Material Purchase':'New Entry'}</h2><p>Fill in the details below to save your record.</p></div><div className="fields">{Object.entries(fields).map(([k,t])=><label className={page==='materials'&&k==='unit'?'material-unit-field':page==='materials'&&k==='openingQty'?'material-qty-field':undefined} key={k}>{purchaseFieldLabel(k)} {Array.isArray(t)?<select required value={form[k]??''} onChange={e=>setForm({...form,[k]:e.target.value})}><option value="">Select</option>{t.map(v=><option key={v} value={v}>{v}</option>)}</select>:['product','blank','printed','material','sale'].includes(t)?<select required value={form[k]||''} onChange={e=>setForm({...form,[k]:e.target.value})}><option value="">{t==='product'?'Choose a product':'Choose an option'}</option>{options(t).map(x=><option value={x.id} key={x.id}>{t==='material'?x.name:t==='sale'?x.orderId:productName(x.id)+(product(x.id)?.sku?' · '+product(x.id).sku:'')}</option>)}</select>:<input required={!['supplier','invoice','fee','shipping','refund','electricity','otherCost','date','openingQty'].includes(k)} type={t==='number'?'number':t==='date'?'date':'text'} min={t==='number'?'0':undefined} step={t==='number'?'0.01':undefined} value={form[k]??(t==='date'?today():'')} onChange={e=>setForm({...form,[k]:e.target.value})}/>}</label>)}{isPurchase&&<>
+{page==='products'&&editingProduct&&<form className="entry-form" onSubmit={submitProductEdit}><h2>Edit Product</h2><div className="fields">{Object.entries(schemas.products.fields).map(([k,t])=><label key={k}>{fieldLabel(k)}{Array.isArray(t)?<select required value={editingProduct[k]} onChange={e=>setEditingProduct({...editingProduct,[k]:e.target.value})}>{t.map(v=><option key={v} value={v}>{v}</option>)}</select>:<input required value={editingProduct[k]??''} onChange={e=>setEditingProduct({...editingProduct,[k]:e.target.value})}/>}</label>)}</div><div className="form-actions"><button className="primary" disabled={saving}>Save Changes</button><button type="button" onClick={()=>setEditingProduct(null)}>Cancel</button></div></form>}{page==='products'&&adjustingProduct&&<form className="entry-form" onSubmit={submitStockAdjustment}><h2>Adjust Stock — {productName(adjustingProduct.id)}</h2><p>Current stock: <strong>{number(stock[adjustingProduct.id])}</strong> units. Enter the correct total stock. A signed adjustment is recorded; purchases and sales are not overwritten.</p><div className="fields"><label>Correct Stock Quantity<input required type="number" min="0" step="1" value={adjustQty} onChange={e=>setAdjustQty(e.target.value)}/></label><label>Reason<select required value={adjustReason} onChange={e=>setAdjustReason(e.target.value)}>{['Stock count correction','Opening stock','Damaged stock','Lost stock','Other adjustment'].map(x=><option key={x}>{x}</option>)}</select></label></div><div className="form-actions"><button className="primary" disabled={saving}>Save Stock Adjustment</button><button type="button" onClick={()=>setAdjustingProduct(null)}>Cancel</button></div></form>}{fields&&<><div className="toolbar"><p>Manage records for {schemas[page].label}.</p><button className="primary" onClick={()=>{setAdding(!adding);setAdvanceTarget(null);purchaseDraftId.current=null;setAttachment(null);setForm({});setInvoiceLines([])}}>+ Add Entry</button></div>{adding&&<form className="entry-form" onSubmit={submit}><div className="form-heading"><h2>{page==='purchases'?'Add T-Shirt Purchase':page==='materialPurchases'?'Add Material Purchase':'New Entry'}</h2><p>Fill in the details below to save your record.</p></div><div className="fields">{Object.entries(fields).map(([k,t])=><label className={page==='materials'&&k==='unit'?'material-unit-field':page==='materials'&&k==='openingQty'?'material-qty-field':undefined} key={k}>{purchaseFieldLabel(k)} {Array.isArray(t)?<select required value={form[k]??''} onChange={e=>setForm({...form,[k]:e.target.value})}><option value="">Select</option>{t.map(v=><option key={v} value={v}>{v}</option>)}</select>:['product','blank','printed','material','sale'].includes(t)?<select required value={form[k]||''} onChange={e=>setForm({...form,[k]:e.target.value})}><option value="">{t==='product'?'Choose a product':'Choose an option'}</option>{options(t).map(x=><option value={x.id} key={x.id}>{t==='material'?x.name:t==='sale'?x.orderId:productName(x.id)+(product(x.id)?.sku?' · '+product(x.id).sku:'')}</option>)}</select>:<input required={!['supplier','invoice','fee','shipping','refund','electricity','otherCost','date','openingQty'].includes(k)} type={t==='number'?'number':t==='date'?'date':'text'} min={t==='number'?'0':undefined} step={t==='number'?'0.01':undefined} value={form[k]??(t==='date'?today():'')} onChange={e=>setForm({...form,[k]:e.target.value})}/>}</label>)}{isPurchase&&<>
   <div className="tax-summary purchase-payment"><strong>Purchase payment</strong>
     <div className="fields">{[['actualPayment','Actual payment (₹)'],['purchasePlatform','Purchase platform'],['purchaseOrderId','Order ID'],['purchaseDiscount','Purchase discount (₹)'],['rewardsUsed','Rewards redeemed (₹)']].map(([key,label])=>{
       const isAmount=['actualPayment','purchaseDiscount','rewardsUsed'].includes(key);
@@ -327,7 +359,7 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
         min={isAmount?0:undefined} step={isAmount?'0.01':undefined}
         value={form[key]??''} onChange={event=>setForm({...form,[key]:event.target.value})}/></label>;
     })}</div>
-    <small>Enter the final amount you paid for the order, including fees and after any discounts or rewards.</small>
+    <small>Enter the amount paid directly for this purchase after discounts or rewards. Apply any previously recorded advance from Actions after saving.</small>
   </div>
   <PurchaseInvoices lines={invoiceLines} setLines={setInvoiceLines} onApply={applyInvoice}
     onExtract={line=>applyInvoice(line,true)} saving={saving} viewInvoice={viewInvoice}/>
@@ -354,8 +386,12 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
   <div className="form-actions"><button type="submit" className="primary"
     disabled={saving||invoiceLines.some(line=>line.reading)}>{attachment.supplierOnly?'Save supplier name':'Save reconciliation'}</button>
     <button type="button" disabled={saving} onClick={()=>{setAttachment(null);setInvoiceLines([])}}>Cancel</button></div>
-</form>}<section><div className="toolbar"><h2>Entries ({data[page].length})</h2><button onClick={()=>csv(page)}>Export CSV</button></div><div className="tablewrap"><table><thead><tr>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><th key={k}>{purchaseFieldLabel(k)}</th>)}{page==='materialPurchases'&&<th>Material</th>}{['products','materials'].includes(page)&&<th>Available</th>}{isPurchase&&<th>Invoices / Order</th>}{isPurchase&&<><th>Actual payment</th><th>Received invoice total</th><th>Documented GST</th><th>Reconciliation</th></>}
-{page==='sales'&&<><th>GST Amount</th><th>Total Incl. GST</th></>}{(page==='products'||isPurchase||isAdmin)&&<th className="actions-head">Actions</th>}</tr></thead><tbody>{[...data[page]].reverse().map(row=><tr key={row.id}>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><td key={k}>{display(row,k)}</td>)}{page==='materialPurchases'&&<td>{display(row,'materialId')}</td>}{page==='products'&&<td>{number(stock[row.id])}</td>}{page==='materials'&&<td>{number(materialStock[row.id])}</td>}{isPurchase&&<td className="invoice-cell">
+</form>}{advanceTarget&&isPurchase&&<ApplyAdvance key={advanceTarget.id} purchase={advanceTarget}
+  field={advancePurchaseFields[page]} balances={advances} balanceDue={advanceDue(advanceTarget)} rupees={rupees}
+  onSaved={row=>{addAdvanceRecord('supplierAdvanceAllocations',row);setAdvanceTarget(null);setMessage('Supplier advance applied.')}}
+  onCancel={()=>setAdvanceTarget(null)}/>}
+<section><div className="toolbar"><h2>Entries ({data[page].length})</h2><button onClick={()=>csv(page)}>Export CSV</button></div><div className="tablewrap"><table><thead><tr>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><th key={k}>{purchaseFieldLabel(k)}</th>)}{page==='materialPurchases'&&<th>Material</th>}{['products','materials'].includes(page)&&<th>Available</th>}{isPurchase&&<th>Invoices / Order</th>}{isPurchase&&<><th>Actual payment</th><th>Received invoice total</th><th>Documented GST</th><th>Reconciliation</th></>}
+{page==='sales'&&<><th>GST Amount</th><th>Total Incl. GST</th></>}{(page==='products'||isPurchase||isAdmin)&&<th className="actions-head">Actions</th>}</tr></thead><tbody>{[...(isPurchase?purchaseRecords[page]:data[page])].reverse().map(row=><tr key={row.id}>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><td key={k}>{display(row,k)}</td>)}{page==='materialPurchases'&&<td>{display(row,'materialId')}</td>}{page==='products'&&<td>{number(stock[row.id])}</td>}{page==='materials'&&<td>{number(materialStock[row.id])}</td>}{isPurchase&&<td className="invoice-cell">
   <InvoiceStatus row={row}/>
   <div>{row.purchasePlatform} {row.purchaseOrderId}</div>
   {(row.invoiceDetails??[]).map((line,index)=><div key={index}>{line.kind} · {line.reference}</div>)}
@@ -363,9 +399,11 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
 {isPurchase&&<PurchaseAmounts row={row}/>}
 {page==='sales'&&<><td>{rupees(taxDetails(row.qty,row.price,row.gstRate,row.gstInclusive).tax)}</td>
 <td>{rupees(taxDetails(row.qty,row.price,row.gstRate,row.gstInclusive).total)}</td></>}{(page==='products'||isPurchase||isAdmin)&&<td className="actions-cell"><div className={isPurchase?"row-actions purchase-row-actions":"row-actions"}>{isPurchase&&
-  <PurchaseInvoiceActions row={row} saving={saving} viewInvoice={viewInvoice} openAttachment={openAttachment}/>}
+  <PurchaseInvoiceActions row={row} saving={saving} viewInvoice={viewInvoice} openAttachment={openAttachment} openAdvance={openAdvance}/>}
 {page==='products'&&<><button type="button" className="action-edit" onClick={()=>setEditingProduct({...row})}>Edit</button><button type="button" className="action-edit" onClick={()=>{setAdjustingProduct(row);setAdjustQty(String(number(stock[row.id])))}}>Adjust Stock</button></>}{isAdmin&&<button type="button" className="action-delete" disabled={saving} title="Delete this entry permanently" onClick={()=>removeRecord(page,row)}>Delete</button>}</div></td>}</tr>)}{!data[page].length&&<tr><td className="empty-state" colSpan={15}>No records yet. Add your first entry to get started.</td></tr>}</tbody></table></div></section></>}
-{page==='monthly'&&<><section className="monthly-report"><div className="toolbar"><div><h2>Monthly Business Summary</h2><p>Choose a month to review all recorded business activity.</p></div><label>Report Month<input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)}/></label></div><div className="report-kpis"><article><small>Sales billed</small><strong>{rupees(saleTotal)}</strong></article><article><small>Purchases + equipment</small><strong>{rupees(purchaseTotal+materialTotal+equipmentTotal)}</strong></article><article><small>Returns / refunds</small><strong>{rupees(refundTotal)}</strong></article><article><small>Estimated cash movement</small><strong>{rupees(cashEstimate)}</strong></article></div><h2>Monthly Breakdown</h2><div className="tablewrap"><table><thead><tr><th>Metric</th><th>Amount</th></tr></thead><tbody>{monthlyReportRows.map(([name,amount])=><tr key={name}><td>{name}</td><td>{rupees(amount)}</td></tr>)}</tbody></table></div><h2>Sales by Marketplace</h2><div className="tablewrap"><table><thead><tr><th>Platform</th><th>Orders</th><th>Units</th><th>Billed Sales</th></tr></thead><tbody>{channels.map(ch=>{const rows=mSales.filter(x=>x.platform===ch);return <tr key={ch}><td>{ch}</td><td>{rows.length}</td><td>{sum(rows,x=>number(x.qty))}</td><td>{rupees(sum(rows,x=>taxDetails(x.qty,x.price,x.gstRate,x.gstInclusive).total))}</td></tr>})}</tbody></table></div><button className="primary" onClick={()=>{const lines=[['Metric','Amount (INR)'],...monthlyReportRows].map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(','));exportFile('nakhrebaaz-monthly-'+reportMonth+'.csv',lines.join('\r\n'),'text/csv')}}>Download Monthly Report (CSV)</button><p className="report-warning">This is a recorded cash-flow estimate, NOT net profit or a GST return. Unsold inventory, depreciation, ITC eligibility, GST adjustments, payment timing and opening balances are not fully accounted for. Confirm GST figures with your accountant before filing.</p></section></>}
+{page==='advances'&&<SupplierAdvances key={session.user.id} balances={advances} today={today()} rupees={rupees}
+  onSaved={row=>addAdvanceRecord('supplierAdvances',row)}/>}
+{page==='monthly'&&<><section className="monthly-report"><div className="toolbar"><div><h2>Monthly Business Summary</h2><p>Choose a month to review all recorded business activity.</p></div><label>Report Month<input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)}/></label></div><div className="report-kpis"><article><small>Sales billed</small><strong>{rupees(saleTotal)}</strong></article><article><small>Purchases + equipment</small><strong>{rupees(purchaseTotal+materialTotal+equipmentTotal+monthlyAdvancesPaid)}</strong></article><article><small>Returns / refunds</small><strong>{rupees(refundTotal)}</strong></article><article><small>Estimated cash movement</small><strong>{rupees(cashEstimate)}</strong></article></div><h2>Monthly Breakdown</h2><div className="tablewrap"><table><thead><tr><th>Metric</th><th>Amount</th></tr></thead><tbody>{monthlyReportRows.map(([name,amount])=><tr key={name}><td>{name}</td><td>{rupees(amount)}</td></tr>)}</tbody></table></div><h2>Sales by Marketplace</h2><div className="tablewrap"><table><thead><tr><th>Platform</th><th>Orders</th><th>Units</th><th>Billed Sales</th></tr></thead><tbody>{channels.map(ch=>{const rows=mSales.filter(x=>x.platform===ch);return <tr key={ch}><td>{ch}</td><td>{rows.length}</td><td>{sum(rows,x=>number(x.qty))}</td><td>{rupees(sum(rows,x=>taxDetails(x.qty,x.price,x.gstRate,x.gstInclusive).total))}</td></tr>})}</tbody></table></div><button className="primary" onClick={()=>{const lines=[['Metric','Amount (INR)'],...monthlyReportRows].map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(','));exportFile('nakhrebaaz-monthly-'+reportMonth+'.csv',lines.join('\r\n'),'text/csv')}}>Download Monthly Report (CSV)</button><p className="report-warning">This is a recorded cash-flow estimate, NOT net profit or a GST return. Unsold inventory, depreciation, ITC eligibility, GST adjustments, payment timing and opening balances are not fully accounted for. Confirm GST figures with your accountant before filing.</p></section></>}
 {page==='reports'&&<><section><h2>CSV Exports</h2><div className="buttons">{Object.keys(initial).map(k=><button key={k} onClick={()=>csv(k)}>Export {k} ({data[k].length})</button>)}</div></section><section><h2>Backup & Restore</h2><button className="primary" onClick={()=>exportFile('nakhrebaaz-backup-'+today()+'.json',JSON.stringify(data,null,2),'application/json')}>Download JSON Backup</button><p>Cloud restore requires a validated migration; direct JSON restore disabled.</p></section><section><h2>Limitations</h2><p>Supabase-backed records with email login; no marketplace API import, automatic refund reconciliation or GST accounting. Keep backups. Do not treat cash movement as net profit.</p></section></>}
 </main></div>}
 createRoot(document.getElementById('root')).render(<App/>);

@@ -1,0 +1,114 @@
+import React,{useRef,useState} from 'react';
+import {parseMoney, normalizeInvoiceKey} from './purchaseReconciliation.js';
+import {saveAdvanceEntry} from './supabase.js';
+
+export default function SupplierAdvances({balances, today, rupees, onSaved}) {
+  const [form,setForm] = useState({supplier:'',amount:'',date:today,reference:''});
+  const [saving,setSaving] = useState(false);
+  const [message,setMessage] = useState('');
+  const draft = useRef();
+  async function submit(event) {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setMessage('');
+    try {
+      const supplier = form.supplier.trim();
+      const amount = parseMoney(form.amount,'advance amount');
+      if (!supplier || !amount) throw Error('Enter a supplier and an advance greater than zero.');
+      draft.current ??= crypto.randomUUID();
+      const row = await saveAdvanceEntry('supplierAdvances',draft.current,
+        {...form,supplier,amount,reference:form.reference.trim()});
+      onSaved(row);
+      draft.current = undefined;
+      setForm({supplier:'',amount:'',date:today,reference:''});
+      setMessage('Supplier advance recorded.');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  return <>
+    <form className="entry-form" onSubmit={submit}>
+      <h2>Record supplier advance</h2>
+      <div className="fields">
+        {[['supplier','Supplier name'],['amount','Advance paid (₹)'],['date','Payment date'],['reference','Payment reference']].map(([key,label])=>
+          <label key={key}>{label}<input required={key!=='reference'} maxLength={250}
+            type={key==='date'?'date':key==='amount'?'number':'text'}
+            min={key==='amount'?'0.01':undefined} step={key==='amount'?'0.01':undefined}
+            value={form[key]} onChange={event=>setForm({...form,[key]:event.target.value})}/></label>)}
+      </div>
+      <button className="primary" disabled={saving}>Record advance</button>
+      {message&&<p role="status">{message}</p>}
+    </form>
+    <section>
+      <h2>Unused supplier advances · {rupees(balances.reduce((sum,row)=>sum+row.remaining,0))}</h2>
+      <div className="tablewrap"><table><thead><tr>
+        {['Supplier','Payment date','Reference','Advance paid','Available'].map(label=><th key={label}>{label}</th>)}
+      </tr></thead><tbody>
+        {[...balances].reverse().map(row=><tr key={row.id}>
+          <td>{row.supplier}</td><td>{row.date}</td><td>{row.reference||'—'}</td>
+          <td>{rupees(row.amount)}</td><td>{rupees(row.remaining)}</td>
+        </tr>)}
+        {!balances.length&&<tr><td colSpan={5}>No advances recorded.</td></tr>}
+      </tbody></table></div>
+    </section>
+  </>;
+}
+
+export function ApplyAdvance({purchase, field, balances, balanceDue, rupees, onSaved, onCancel}) {
+  const eligible = balances.filter(row => row.remaining > 0 &&
+    normalizeInvoiceKey(row.supplier) === normalizeInvoiceKey(purchase.supplier));
+  const [selected,setSelected] = useState(eligible[0]?.id??'');
+  const [amount,setAmount] = useState(eligible[0] ? String(Math.min(eligible[0].remaining,balanceDue)) : '');
+  const [saving,setSaving] = useState(false);
+  const [message,setMessage] = useState('');
+  const draft = useRef();
+  const available = eligible.find(advance=>advance.id===selected)?.remaining??0;
+  const limit = Math.min(available,balanceDue);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setMessage('');
+    try {
+      const value = parseMoney(amount,'amount to apply');
+      if (!selected || value <= 0 || value > limit) throw Error('Enter an amount within the available advance and purchase balance.');
+      draft.current ??= crypto.randomUUID();
+      const allocation = await saveAdvanceEntry('supplierAdvanceAllocations',draft.current,
+        {advanceId:selected,[field]:purchase.id,amount:value});
+      onSaved(allocation);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <form className="entry-form" onSubmit={submit}>
+    <h2>Apply supplier advance</h2>
+    <p>{purchase.supplier} · Invoice {purchase.invoice || purchase.invoiceDetails.find(line=>line.kind==='Product')?.reference} · Balance due {rupees(balanceDue)}</p>
+    <div className="fields">
+      <label>Available advance<select required value={selected} onChange={event=>{
+        const id=event.target.value;
+        setSelected(id);
+        setAmount(id?String(Math.min(eligible.find(row=>row.id===id).remaining,balanceDue)):'');
+      }}>
+        <option value="">Select an advance</option>
+        {eligible.map(row=><option value={row.id} key={row.id}>
+          {row.date} · {rupees(row.remaining)} available{row.reference?` · ${row.reference}`:''}
+        </option>)}
+      </select></label>
+      <label>Amount to apply (₹)<input required type="number" min="0.01" max={limit} step="0.01"
+        value={amount} onChange={event=>setAmount(event.target.value)}/></label>
+    </div>
+    <div className="form-actions">
+      <button className="primary" disabled={saving||!eligible.length}>Apply advance</button>
+      <button type="button" disabled={saving} onClick={onCancel}>Cancel</button>
+    </div>
+    {!eligible.length&&<p>Record an advance using this supplier’s name first.</p>}
+    {message&&<p role="status">{message}</p>}
+  </form>;
+}
