@@ -197,3 +197,22 @@ test('saves material and equipment purchases with multiple manually verified inv
     expect(db[table][0].invoice_details).toHaveLength(2);
   }
 });
+
+test('autofills the discount and GST from a Flipkart printer PDF', async ({page}) => {
+  await useSellerApi(page);
+  await page.getByRole('button',{name:'Machines & Equipment',exact:true}).click();
+  await page.getByRole('button',{name:'+ Add Entry'}).click();
+  await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+  const lines = [
+    'Flipkart Tax Invoice', 'Sold By: Example Printer Supplier', 'Invoice Number: FK-1099',
+    'Order ID: Bill To',
+    'Single Function Printer: 1 8576.00 - 1134.00 6306.78 1135.22 7442.00',
+    'Total 1 8576.00 - 1134.00 6306.78 1135.22 7442.00', 'Grand Total: 7442.00'
+  ];
+  await page.getByLabel('Invoice file').setInputFiles({name:'printer.pdf',mimeType:'application/pdf',buffer:makePdf(lines)});
+  await expect(page.getByLabel('Invoice discount (₹)',{exact:true})).toHaveValue('1134');
+  await expect(page.getByLabel('Purchase discount (₹)',{exact:true})).toHaveValue('1134');
+  await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('1135.22');
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('7442');
+  await expect(page.getByLabel('Invoice order ID',{exact:true})).toHaveValue('');
+});
