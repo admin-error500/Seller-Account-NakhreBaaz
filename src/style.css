@@ -21,3 +21,8 @@
 .legacy-payment{display:block;margin-top:4px;color:#64748b}
 .entry-form .invoice-verification{flex-direction:row;align-items:center;gap:8px}
 .entry-form .invoice-verification input{width:16px;height:16px;flex:none}
+
+.invoice-status{display:flex;align-items:center;gap:5px;width:max-content;font-size:12px;font-weight:650;margin-bottom:5px}
+.invoice-status>span{font-size:15px;line-height:1}
+.invoice-status-ok{color:#15703d}
+.invoice-status-error{color:#b42318}

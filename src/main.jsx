@@ -25,6 +25,24 @@ const fieldLabels={openingQty:'Opening Quantity',gstRate:'GST Rate (%)',gstInclu
 const fieldLabel=k=>fieldLabels[k]||k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase());
 const today=()=>new Date().toISOString().slice(0,10);
 const rupees=n=>'₹'+(Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+function invoiceAttachment(row, invoice) {
+  if (invoice.path) return invoice.path;
+  if (row.invoice&&normalizeInvoiceKey(row.invoice)===normalizeInvoiceKey(invoice.reference)) return row.invoicePath;
+}
+function InvoiceStatus({row}) {
+  const invoices=row.invoiceDetails??[];
+  const {status,hasActualPayment}=purchaseDetails(row);
+  const hasMissingFile=invoices.some(invoice=>!invoiceAttachment(row,invoice));
+  const reason=hasMissingFile||(!invoices.length&&!row.invoicePath)?'Invoice file missing'
+    : !invoices.length||invoices.some(invoice=>invoice.verified!==true)?'Verification pending'
+      : !hasActualPayment?'Actual payment pending'
+        : status==='Partially received'?'Invoice total below payment'
+          : status==='Mismatch'?'Amount mismatch':'';
+  return <span className={`invoice-status ${reason?'invoice-status-error':'invoice-status-ok'}`}>
+    <span aria-hidden="true">{reason?'✕':'✓'}</span>
+    {reason||'Verified & matched'}
+  </span>;
+}
 function PurchaseAmounts({row}) {
   const amounts=purchaseDetails(row);
   return <><td>{rupees(amounts.paid)}{!amounts.hasActualPayment&&<small className="legacy-payment">Legacy estimate</small>}</td>
@@ -102,7 +120,7 @@ function openAttachment(row, legacyIndex) {
   setInvoiceLines([{
     ...existing,id:crypto.randomUUID(),kind:existing?.kind??'Product',
     supplier:existing?.supplier??row.supplier??'',
-    ...(existing?.kind==='Product'&&{amount:'',gst:''}),
+    ...(existing?.kind==='Product'&&!existing.verified&&{amount:'',gst:''}),
     legacyIndex:legacyIndex>=0?legacyIndex:null,
   }]);
   setMessage('');
@@ -252,6 +270,7 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
     <button type="button" disabled={saving} onClick={()=>{setAttachment(null);setInvoiceLines([])}}>Cancel</button></div>
 </form>}<section><div className="toolbar"><h2>Entries ({data[page].length})</h2><button onClick={()=>csv(page)}>Export CSV</button></div><div className="tablewrap"><table><thead><tr>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><th key={k}>{fieldLabel(k)}</th>)}{page==='materialPurchases'&&<th>Material</th>}{['products','materials'].includes(page)&&<th>Available</th>}{isPurchase&&<th>Invoices / Order</th>}{isPurchase&&<><th>Actual payment</th><th>Received invoice total</th><th>Documented GST</th><th>Reconciliation</th></>}
 {page==='sales'&&<><th>GST Amount</th><th>Total Incl. GST</th></>}{(page==='products'||isAdmin)&&<th className="actions-head">Actions</th>}</tr></thead><tbody>{[...data[page]].reverse().map(row=><tr key={row.id}>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><td key={k}>{display(row,k)}</td>)}{page==='materialPurchases'&&<td>{display(row,'materialId')}</td>}{page==='products'&&<td>{number(stock[row.id])}</td>}{page==='materials'&&<td>{number(materialStock[row.id])}</td>}{isPurchase&&<td className="invoice-cell">
+  <InvoiceStatus row={row}/>
   <div>{row.purchasePlatform} {row.purchaseOrderId}</div>
   {row.invoicePath&&<button className="compact-button" onClick={()=>viewInvoice(row.invoicePath)}>View invoice</button>}
   {row.invoice&&!(row.invoiceDetails??[]).some(line=>normalizeInvoiceKey(line.reference)===normalizeInvoiceKey(row.invoice))&&
@@ -259,7 +278,10 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
   {(row.invoiceDetails??[]).map((line,index)=><div key={index}>
     {line.kind} · {line.reference}
     {line.path&&<button className="compact-button" onClick={()=>viewInvoice(line.path)}>View</button>}
-    {!line.verified&&<button className="compact-button" disabled={saving} onClick={()=>openAttachment(row,index)}>Verify</button>}
+    {(!line.verified||!invoiceAttachment(row,line))&&
+      <button className="compact-button" disabled={saving} onClick={()=>openAttachment(row,index)}>
+        {line.verified?'Upload file':'Verify'}
+      </button>}
   </div>)}
   <button className="compact-button" disabled={saving} onClick={()=>openAttachment(row)}>Add invoices</button>
 </td>}

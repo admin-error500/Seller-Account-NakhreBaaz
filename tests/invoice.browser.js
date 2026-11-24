@@ -51,8 +51,8 @@ async function imageInvoice(page, mime) {
   return Buffer.from(data,'base64');
 }
 
-async function useSellerApi(page) {
-  const db = {products:[{id:sku,sku:'PLAIN-M',name:'Plain T-Shirt',size:'M',color:'Black',type:'BLANK'}],purchases:[],material_purchases:[],equipment_purchases:[]};
+async function useSellerApi(page, equipmentPurchases = []) {
+  const db = {products:[{id:sku,sku:'PLAIN-M',name:'Plain T-Shirt',size:'M',color:'Black',type:'BLANK'}],purchases:[],material_purchases:[],equipment_purchases:equipmentPurchases};
   const uploads = [];
   const user = {id:seller,email:'seller@example.test',app_metadata:{seller_role:'admin'},user_metadata:{}};
   const session = {access_token:'browser-test',refresh_token:'browser-test',
@@ -79,7 +79,7 @@ async function useSellerApi(page) {
       } else list.push(row);
       return result(row,201);
     }
-    if (request.method()==='PATCH' && table==='purchases') {
+    if (request.method()==='PATCH' && ['purchases','equipment_purchases'].includes(table)) {
       const row=list.find(item=>url.searchParams.get('id')==='eq.'+item.id &&
         url.searchParams.get('invoice_revision')==='eq.'+item.invoice_revision);
       if (!row) return result([]);
@@ -248,4 +248,35 @@ test('reads Amazon wrapped product and shipping rows without applying shipping d
   expect(db.material_purchases[0]).toMatchObject({
     qty:1, rate:423.73, purchase_discount:0, invoice_details:[{amount:500,gst:76.27,discount:100.85}]
   });
+});
+
+test('shows invoice verification and payment match next to purchase attachments', async ({page}) => {
+  const invoice = {kind:'Product', reference:'TEST-1', supplier:'Example Supplier', verified:true, path:'test/invoice.pdf', amount:500, gst:0};
+  const records = [
+    ['Green', 500, [invoice], 'Verified & matched', 'ok'],
+    ['Missing', 500, [{...invoice, path:null}], 'Invoice file missing', 'error'],
+    ['No invoice', 500, [], 'Invoice file missing', 'error'],
+    ['Partial', 501, [invoice], 'Invoice total below payment', 'error'],
+    ['Mismatch', 499, [invoice], 'Amount mismatch', 'error'],
+    ['Unverified', 500, [{...invoice, verified:false}], 'Verification pending', 'error'],
+  ];
+  await useSellerApi(page, records.map(([name, actual_payment, invoice_details], index) =>
+    ({id:String(index), name, actual_payment, invoice_details, invoice_revision:0})));
+  await page.getByRole('button',{name:'Machines & Equipment',exact:true}).click();
+  for (const [name,,, label, mode] of records) {
+    const badge = page.getByRole('row').filter({has:page.getByRole('cell',{name,exact:true})})
+      .locator('.invoice-status');
+    await expect(badge).toHaveText((mode==='ok'?'✓':'✕')+label);
+    await expect(badge).toHaveClass(`invoice-status invoice-status-${mode}`);
+  }
+  await page.getByRole('row').filter({has:page.getByRole('cell',{name:'Missing',exact:true})})
+    .getByRole('button',{name:'Upload file',exact:true}).click();
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('500');
+  const lines = ['Sold By: Example Supplier', 'Invoice Number: TEST-1', 'Total GST: 0.00','Grand Total: 500.00'];
+  await page.getByLabel('Invoice file').setInputFiles({name:'invoice.pdf',mimeType:'application/pdf',buffer:makePdf(lines)});
+  await expect(page.getByText('Review the extracted fields before saving.')).toBeVisible();
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save reconciliation'}).click();
+  await expect(page.getByRole('row').filter({has:page.getByRole('cell',{name:'Missing',exact:true})})
+    .locator('.invoice-status')).toHaveClass('invoice-status invoice-status-ok');
 });
