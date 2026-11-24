@@ -311,3 +311,33 @@ test('overview shows five cards, a conditional mismatch alert and grouped purcha
   await page.getByRole('button',{name:'Monthly Business Report'}).click();
   await expect(page.getByRole('row').filter({hasText:'Marketplace fees + shipping'})).toBeVisible();
 });
+
+test('reconciles a purchase after reading a separate delivery-charge PDF', async ({page}) => {
+  const {db} = await useSellerApi(page,[{
+    id:'1',name:'Printer',qty:1,rate:7442,actual_payment:8721,invoice_revision:0,
+    invoice_details:[
+      {kind:'Product',reference:'PRODUCT-1',supplier:'Retailer',amount:7442,gst:1135.22,verified:true,path:'test/product.pdf'},
+      {kind:'Fee',reference:'FEE-1',supplier:'Marketplace',amount:56,gst:8.54,verified:true,path:'test/fee.pdf'},
+    ],
+  }]);
+  await openPurchasePage(page,'Machines & Equipment');
+  await page.getByRole('button',{name:'Add invoices',exact:true}).click();
+  const lines = [
+    'Flipkart Tax Invoice', 'Sold By: Example Seller', 'Invoice Number: SERVICE-1',
+    'Particulars SAC Qty Gross Taxable IGST Total',
+    'Delivery Charges 996819 1.0 1223.00 1164.76 58.24 1223.00',
+    'Total 1.0 1223.00 1164.76 58.24 1223.00',
+  ];
+  const file = process.env.SELLER_TEST_DELIVERY_PDF
+    ?? {name:'delivery.pdf',mimeType:'application/pdf',buffer:makePdf(lines)};
+  await page.getByLabel('Invoice file').setInputFiles(file);
+  await expect(page.getByLabel('Invoice type')).toHaveValue('Fee');
+  await expect(page.getByLabel('Invoice quantity',{exact:true})).toHaveValue('1');
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('1223');
+  await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('58.24');
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save reconciliation'}).click();
+  await expect(page.getByText('Verified & matched',{exact:true})).toBeVisible();
+  expect(db.equipment_purchases[0]).toMatchObject({qty:1,rate:7442,actual_payment:8721});
+  expect(db.equipment_purchases[0].invoice_details[2]).toMatchObject({kind:'Fee',amount:1223,gst:58.24});
+});
