@@ -1,0 +1,199 @@
+import {expect, test} from '@playwright/test';
+
+const seller = '10000000-0000-0000-0000-000000000001';
+const sku = '10000000-0000-0000-0000-000000000002';
+const sample = [
+  'Flipkart Tax Invoice', 'Sold By: Example Textiles', 'Invoice Number: FK-0042',
+  'Order ID: OD123456789012', 'Product: Plain T-Shirt', 'Quantity: 1',
+  'Unit Price: 6306.78', 'Taxable Amount: 6306.78', 'Discount: 0.00', 'Total GST: 1135.22',
+  'Grand Total: 7442.00',
+];
+
+function makePdf(lines, jpeg) {
+  const content = jpeg ? 'q 600 0 0 370 0 0 cm /Im Do Q'
+    : 'BT /F1 16 Tf 28 340 Td ' + lines.map(line => `(${line}) Tj`).join(' 0 -26 Td ') + ' ET';
+  const resources = jpeg ? '/XObject << /Im 5 0 R >>' : '/Font << /F1 5 0 R >>';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 370] /Resources << ${resources} >> /Contents 4 0 R >>`,
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    jpeg ? Buffer.concat([Buffer.from(`<< /Type /XObject /Subtype /Image /Width 1200 /Height 740 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`),
+      jpeg, Buffer.from('\nendstream')]) : '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  ];
+  const chunks = [Buffer.from('%PDF-1.4\n')];
+  const offsets = [];
+  let length = chunks[0].length;
+  for (const [index, object] of objects.entries()) {
+    offsets.push(length);
+    const entry = Buffer.concat([Buffer.from(`${index + 1} 0 obj\n`), Buffer.from(object), Buffer.from('\nendobj\n')]);
+    chunks.push(entry);
+    length += entry.length;
+  }
+  chunks.push(Buffer.from(`xref\n0 6\n0000000000 65535 f \n${offsets.map(offset =>
+    String(offset).padStart(10,'0')+' 00000 n \n').join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${length}\n%%EOF\n`));
+  return Buffer.concat(chunks);
+}
+
+async function imageInvoice(page, mime) {
+  const data = await page.evaluate(({lines,mime}) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1200;
+    canvas.height = 740;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000';
+    ctx.font = '36px Arial';
+    lines.forEach((line,index) => ctx.fillText(line, 65, 65 + index * 55));
+    return canvas.toDataURL(mime).split(',')[1];
+  }, {lines:sample,mime});
+  return Buffer.from(data,'base64');
+}
+
+async function useSellerApi(page) {
+  const db = {products:[{id:sku,sku:'PLAIN-M',name:'Plain T-Shirt',size:'M',color:'Black',type:'BLANK'}],purchases:[],material_purchases:[],equipment_purchases:[]};
+  const uploads = [];
+  const user = {id:seller,email:'seller@example.test',app_metadata:{seller_role:'admin'},user_metadata:{}};
+  const session = {access_token:'browser-test',refresh_token:'browser-test',
+    expires_at:Math.floor(Date.now()/1000)+3600, token_type:'bearer',user};
+  await page.addInitScript(session => localStorage.setItem('sb-seller-test-auth-token',JSON.stringify(session)),session);
+  await page.route('https://seller-test.supabase.co/**', async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const table = url.pathname.split('/').at(-1);
+    const list = db[table] ?? [];
+    const result = (json, status=200) => route.fulfill({status,json});
+    if (url.pathname.startsWith('/auth/')) return result(user);
+    if (url.pathname.startsWith('/storage/')) {
+      uploads.push(request.method());
+      return result({Key:table});
+    }
+    if (request.method()==='GET') return result(list);
+    const payload = request.postDataJSON();
+    if (request.method()==='POST' && ['purchases','equipment_purchases','record_material_purchase'].includes(table)) {
+      const row={...(payload.purchase??payload),invoice_revision:0};
+      if (table==='record_material_purchase') {
+        row.material_id=sku;
+        db.material_purchases.push(row);
+      } else list.push(row);
+      return result(row,201);
+    }
+    if (request.method()==='PATCH' && table==='purchases') {
+      const row=list.find(item=>url.searchParams.get('id')==='eq.'+item.id &&
+        url.searchParams.get('invoice_revision')==='eq.'+item.invoice_revision);
+      if (!row) return result([]);
+      Object.assign(row,payload,{invoice_revision:row.invoice_revision+1});
+      return result([row]);
+    }
+    return result({message:'Unexpected browser test API call'},400);
+  });
+  await page.goto('/');
+  await expect(page.getByRole('heading',{name:'Overview'})).toBeVisible();
+  return {db,uploads};
+}
+
+test('reads PDF and adds later fee without increasing stock or payment', async ({page}) => {
+  const {db,uploads} = await useSellerApi(page);
+  await page.getByRole('button',{name:'T-Shirt Purchases',exact:true}).click();
+  await page.getByRole('button',{name:'+ Add Entry'}).click();
+  await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+  await page.getByLabel('Invoice file').setInputFiles({name:'product.pdf',mimeType:'application/pdf',buffer:makePdf(sample)});
+  await expect(page.getByRole('status')).toHaveText('Review the extracted fields before saving.');
+  await expect(page.getByLabel('Invoice supplier')).toHaveValue('Example Textiles');
+  await expect(page.getByLabel('Product description')).toHaveValue('Plain T-Shirt');
+  await expect(page.getByRole('combobox',{name:'Product',exact:true})).toHaveValue(sku);
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('7442');
+  await expect(page.getByLabel('Documented GST (₹)')).toHaveValue('1135.22');
+  await page.getByLabel('Actual payment (₹)').fill('8721');
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save Entry'}).click();
+  await expect(page.getByText('Entry saved',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Add invoices',exact:true}).click();
+  await page.getByLabel('Invoice type').selectOption('Fee');
+  await page.getByLabel('Invoice supplier').fill('Marketplace');
+  await page.getByLabel('Invoice number',{exact:true}).fill('FEE-0042');
+  await page.getByLabel('Invoice total (₹)',{exact:true}).fill('56');
+  await page.getByLabel('Documented GST (₹)').fill('8.54');
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save reconciliation'}).click();
+  await expect(page.getByText('Purchase reconciliation updated.')).toBeVisible();
+  expect(db.purchases).toHaveLength(1);
+  expect(db.purchases[0].qty).toBe(1);
+  expect(db.purchases[0].actual_payment).toBe(8721);
+  expect(db.purchases[0].invoice_details).toHaveLength(2);
+  expect(uploads).toEqual(['POST']);
+  const row = page.getByRole('row').filter({hasText:'FEE-0042'});
+  for (const amount of ['₹8,721.00','₹7,498.00','₹1,143.76','₹1,223.00']) await expect(row.getByText(amount)).toBeVisible();
+  await expect(row.getByText('Partially received')).toBeVisible();
+  await page.getByRole('button',{name:'Overview',exact:true}).click();
+  await expect(page.getByText('Stock Units').locator('..').getByText('1',{exact:true})).toBeVisible();
+  await expect(page.getByText('Pending purchase reconciliation').locator('..').getByText('₹1,223.00')).toBeVisible();
+  await page.getByRole('button',{name:'Monthly Business Report'}).click();
+  await expect(page.getByRole('row').filter({hasText:'Documented purchase GST'}).getByText('₹1,143.76')).toBeVisible();
+});
+
+for (const format of ['png','jpeg','scanned pdf']) {
+  test(`uses local OCR for ${format}`, async ({page}) => {
+    await useSellerApi(page);
+    await page.getByRole('button',{name:'Machines & Equipment',exact:true}).click();
+    await page.getByRole('button',{name:'+ Add Entry'}).click();
+    await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+    const imageType = format==='png'?'image/png':'image/jpeg';
+    const image = await imageInvoice(page,imageType);
+    const file = format==='scanned pdf'
+      ? {name:'scan.pdf',mimeType:'application/pdf',buffer:makePdf([],image)}
+      : {name:`invoice.${format}`,mimeType:imageType,buffer:image};
+    await page.getByLabel('Invoice file').setInputFiles(file);
+    await expect(page.getByRole('status')).toHaveText('Review the extracted fields before saving.',{timeout:30000});
+    await expect(page.getByLabel('Invoice supplier')).toHaveValue('Example Textiles');
+    await expect(page.getByLabel('Invoice number',{exact:true}).last()).toHaveValue('FK-0042');
+    await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('7442');
+    await expect(page.getByLabel('Documented GST (₹)')).toHaveValue('1135.22');
+    const remove = page.getByRole('button',{name:'Remove invoice'});
+    expect((await remove.boundingBox()).width).toBeLessThan(150);
+    await remove.click();
+    await expect(page.getByLabel('Invoice file')).toHaveCount(0);
+  });
+}
+
+test('saves material and equipment purchases with multiple manually verified invoices', async ({page}) => {
+  const {db} = await useSellerApi(page);
+  for (const [category,table,name] of [
+    ['Material Purchases','material_purchases','Material Name'],
+    ['Machines & Equipment','equipment_purchases','Product Name']
+  ]) {
+    await page.getByRole('button',{name:category,exact:true}).click();
+    await page.getByRole('button',{name:'+ Add Entry'}).click();
+    await page.getByLabel(name,{exact:true}).fill('Test purchase');
+    if (table==='material_purchases') {
+      await page.getByRole('combobox',{name:'Category',exact:true}).selectOption('Ink');
+      await page.getByRole('combobox',{name:'Unit',exact:true}).selectOption('ml');
+    }
+    await page.getByLabel('Quantity',{exact:true}).fill('2');
+    await page.getByLabel('Unit Price (₹)',{exact:true}).fill('50');
+    await page.getByRole('combobox',{name:'GST Rate (%)',exact:true}).selectOption('0');
+    await page.getByRole('combobox',{name:'GST included in unit price?',exact:true}).selectOption('No');
+    await page.getByLabel('Actual payment (₹)').fill('100');
+    for (let index=1;index<=2;index++) {
+      await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+      const invoice=page.getByRole('group',{name:`Invoice ${index}`,exact:true});
+      await invoice.getByLabel('Invoice supplier').fill('Test Supplier');
+      await invoice.getByLabel('Invoice number',{exact:true}).fill(table+'-1');
+      await invoice.getByLabel('Invoice total (₹)').fill('50');
+      await invoice.getByLabel('Documented GST (₹)').fill('0');
+    }
+    await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+    await page.getByRole('button',{name:'Save Entry'}).click();
+    await expect(page.getByText('This invoice is already listed on the purchase.')).toBeVisible();
+    expect(db[table]).toHaveLength(0);
+    await page.getByRole('group',{name:'Invoice 2',exact:true})
+      .getByLabel('Invoice number',{exact:true}).fill(table+'-2');
+    await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+    await page.getByRole('button',{name:'Save Entry'}).click();
+    await expect(page.getByText('Entry saved',{exact:true})).toBeVisible();
+    await expect(page.getByText('Reconciled',{exact:true})).toBeVisible();
+    expect(db[table]).toHaveLength(1);
+    expect(db[table][0].invoice_details).toHaveLength(2);
+  }
+});

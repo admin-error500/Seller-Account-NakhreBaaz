@@ -9,3 +9,15 @@
 
 /* Raw materials: compact unit dropdown with quantity beside it. */
 @media(min-width:651px){.entry-form .fields:has(.material-unit-field){grid-template-columns:minmax(0,1.35fr) minmax(0,1.15fr) minmax(105px,.65fr) minmax(130px,.85fr);gap:18px}.entry-form .fields:has(.material-unit-field) .material-unit-field{grid-column:3}.entry-form .fields:has(.material-unit-field) .material-qty-field{grid-column:4}}
+
+.invoice-editor .invoice-fields{min-width:0;margin:0;padding:12px;border:1px solid #dce7f3;border-radius:9px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:10px}
+.invoice-fields legend{padding:0 6px;font-size:13px;font-weight:650}
+.invoice-fields .invoice-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}
+.invoice-notice{grid-column:1/-1}
+.compact-button{justify-self:start;align-self:center;padding:5px 9px;font-size:12px;min-height:28px}
+.invoice-cell .compact-button{margin:3px 0 3px 6px}
+.invoice-cell>div:empty{display:none}
+.tax-summary.purchase-payment>.fields{display:grid;margin-bottom:0}
+.legacy-payment{display:block;margin-top:4px;color:#64748b}
+.entry-form .invoice-verification{flex-direction:row;align-items:center;gap:8px}
+.entry-form .invoice-verification input{width:16px;height:16px;flex:none}
