@@ -247,6 +247,8 @@ test('reads Amazon wrapped product and shipping rows without applying shipping d
   const file = process.env.SELLER_TEST_INVOICE_PDF
     ?? {name:'amazon.pdf',mimeType:'application/pdf',buffer:makePdf(lines)};
   await page.getByLabel('Invoice file').setInputFiles(file);
+  await expect(page.getByLabel('Invoice supplier',{exact:true})).toHaveValue(process.env.SELLER_TEST_INVOICE_PDF
+    ? 'YUGAN MEDICAL INDUSTRIES PRIVATE LIMITED' : 'Example Supplier');
   await expect(page.getByLabel('Product description')).toHaveValue(/Thermal.*Label/i);
   await expect(page.getByLabel('Invoice quantity',{exact:true})).toHaveValue('1');
   await expect(page.getByLabel('Invoice unit price before discount (₹)',{exact:true})).toHaveValue('423.73');
@@ -374,4 +376,20 @@ test('reconciles all three Flipkart PDFs against one purchase', async ({page}) =
   await expect(page.getByRole('row').filter({hasText:'Amount mismatch'}).getByText('₹11.00',{exact:true})).toBeVisible();
   expect(db.equipment_purchases[0]).toMatchObject({qty:1,actual_payment:8710});
   expect(db.equipment_purchases[0].invoice_details).toHaveLength(3);
+});
+
+test('corrects a stored billing heading without changing the purchase amounts or invoice file', async ({page}) => {
+  const {db,uploads} = await useSellerApi(page,[{
+    id:'1',name:'Label roll',supplier:'Billing Address :',invoice:'AMZ-1',actual_payment:500,qty:1,invoice_revision:0,
+    invoice_details:[{reference:'AMZ-1',verified:true,kind:'Product',supplier:'Billing Address :',
+      amount:500,gst:76.27,path:'test/original.pdf'}],
+  }]);
+  await openPurchasePage(page,'Machines & Equipment');
+  await page.getByRole('button',{name:'Correct supplier name',exact:true}).click();
+  await page.getByLabel('Supplier name',{exact:true}).fill('Example Seller Private Limited');
+  await page.getByRole('button',{name:'Save supplier name',exact:true}).click();
+  await expect(page.getByText('Supplier name corrected.',{exact:true})).toBeVisible();
+  expect(db.equipment_purchases[0]).toMatchObject({supplier:'Example Seller Private Limited',qty:1,actual_payment:500,
+    invoice_details:[{supplier:'Example Seller Private Limited',amount:500,gst:76.27,path:'test/original.pdf'}]});
+  expect(uploads).toEqual([]);
 });

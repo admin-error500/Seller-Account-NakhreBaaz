@@ -71,13 +71,29 @@ function serviceInvoiceTable(text) {
   return {quantity:qty,gross,taxable,gst,total,description,multiple:lines.length>1};
 }
 
-export function parseInvoice(raw) {
+export const isAddressHeading = value =>
+  /^(?:billing(?: address)?|shipping(?: address)?|bill(?:ed)? to|ship(?:ped)? to)(?:[ \t]*[:#]|[ \t]*$)/i
+    .test(String(value??'').trim());
+
+function invoiceSupplier(text, sellerColumn) {
+  const source = sellerColumn || text;
+  const candidate = findText(source, String.raw`Sold[ \t]*By|Supplier(?:[ \t]*Name)?|Seller[ \t]*Name|Billed[ \t]*From|Issued[ \t]*By`, '([^\\n]+)');
+  const name = candidate.split(/(?:^|\s+)(?:GSTIN|PAN|Billing Address|Ship(?:ping)? Address|Registered Office Address)\b|\s*,/i)[0].trim();
+  if (!name || isAddressHeading(name)) return '';
+  const lines = source.split('\n');
+  const nameLine = lines.findIndex(line => line.trim().endsWith(candidate));
+  const suffix = sellerColumn && candidate === name && nameLine >= 0
+    ? lines[nameLine+1]?.trim().match(/^(?:limited|ltd\.?|llp|inc\.?)(?=\s*,|$)/i)?.[0]
+    : '';
+  return suffix ? `${name} ${suffix}` : name;
+}
+
+export function parseInvoice(raw, sellerColumn = '') {
   const text = raw.normalize('NFKC').replace(/[\r\f]/g, '').replace(/[\u00a0\t]+/g, ' ').replace(/[−–](?=[ \t]*(?:₹|\d))/g, '-').replace(/-[ \t]*₹/g, '₹-');
   const reference = findText(text, String.raw`Invoice[ \t]*(?:Number|No\.?|#|ID)|Bill[ \t]*(?:No\.?|Number)|Tax Invoice(?=[ \t]*:)`, id);
   const labeledOrder = findText(text, String.raw`(?:Order|Sub[ -]?Order)[ \t]*(?:ID|Number|No\.?)`, id);
-  const supplierLine = findText(text, String.raw`Sold[ \t]*By|Supplier(?:[ \t]*Name)?|Seller[ \t]*Name|Billed[ \t]*From|Issued[ \t]*By`, '([^\\n]+)');
-  const supplier = supplierLine.split(/\s+(?:GSTIN|PAN|Ship(?:ping)? Address|Registered Office Address)\b|\s*,/i)[0].trim();
-  const gstin = findText(text, String.raw`(?:Supplier[ \t]+|Seller[ \t]+)?(?:GSTIN(?:[ \t]*(?:No\.?|Number))?|GST[ \t]+Registration[ \t]+(?:No\.?|Number))`, '([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])');
+  const supplier = invoiceSupplier(text, sellerColumn);
+  const gstin = findText(sellerColumn || text, String.raw`(?:Supplier[ \t]+|Seller[ \t]+)?(?:GSTIN(?:[ \t]*(?:No\.?|Number))?|GST[ \t]+Registration[ \t]+(?:No\.?|Number))`, '([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])');
   const platform = /\bflipkart\b|\bOD\d{10,}/i.test(text) ? 'Flipkart'
     : /\bamazon\b|\b\d{3}-\d{7}-\d{7}\b/i.test(text) ? 'Amazon'
       : /\bmeesho\b|\bfashnear\b/i.test(text) ? 'Meesho' : '';
