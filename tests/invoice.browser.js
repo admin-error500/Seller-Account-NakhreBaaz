@@ -120,6 +120,7 @@ test('reads PDF and adds later fee without increasing stock or payment', async (
   await view.hover();
   await expect(view.locator('.invoice-action-tooltip')).toBeVisible();
   const add = actions.getByRole('button',{name:'Add invoices',exact:true});
+  await expect(add).toBeEnabled();
   await view.focus();
   await page.keyboard.press('Tab');
   await expect(add).toBeFocused();
@@ -312,32 +313,59 @@ test('overview shows five cards, a conditional mismatch alert and grouped purcha
   await expect(page.getByRole('row').filter({hasText:'Marketplace fees + shipping'})).toBeVisible();
 });
 
-test('reconciles a purchase after reading a separate delivery-charge PDF', async ({page}) => {
-  const {db} = await useSellerApi(page,[{
-    id:'1',name:'Printer',qty:1,rate:7442,actual_payment:8721,invoice_revision:0,
-    invoice_details:[
-      {kind:'Product',reference:'PRODUCT-1',supplier:'Retailer',amount:7442,gst:1135.22,verified:true,path:'test/product.pdf'},
-      {kind:'Fee',reference:'FEE-1',supplier:'Marketplace',amount:56,gst:8.54,verified:true,path:'test/fee.pdf'},
-    ],
-  }]);
+test('reconciles all three Flipkart PDFs against one purchase', async ({page}) => {
+  const {db,uploads} = await useSellerApi(page);
   await openPurchasePage(page,'Machines & Equipment');
-  await page.getByRole('button',{name:'Add invoices',exact:true}).click();
-  const lines = [
-    'Flipkart Tax Invoice', 'Sold By: Example Seller', 'Invoice Number: SERVICE-1',
-    'Particulars SAC Qty Gross Taxable IGST Total',
-    'Delivery Charges 996819 1.0 1223.00 1164.76 58.24 1223.00',
-    'Total 1.0 1223.00 1164.76 58.24 1223.00',
+  await page.getByRole('button',{name:'+ Add Entry'}).click();
+  const docs = [
+    {name:'product',kind:'Product',amount:7442,gst:1135.22,discount:1134,lines:[
+      'Product: Single Function Printer', 'Single Function Printer 1 8576.00 -1134.00 6306.78 1135.22 7442.00',
+      'Total 1 8576.00 -1134.00 6306.78 1135.22 7442.00', 'Grand Total: 7442.00',
+    ]},
+    {name:'protection',kind:'Fee',amount:56,gst:8.54,discount:0,lines:[
+      'Protect Promise Fee 1 56.00 0.00 47.46 8.54 56.00',
+      'Total 1 56.00 0.00 47.46 8.54 56.00', 'Grand Total: 56.00',
+    ]},
+    {name:'delivery',kind:'Fee',amount:1223,gst:58.24,discount:null,lines:[
+      'Particulars SAC Qty Gross Taxable IGST Total',
+      'Delivery Charges 996819 1.0 1223.00 1164.76 58.24 1223.00',
+      'Total 1.0 1223.00 1164.76 58.24 1223.00',
+    ]},
   ];
-  const file = process.env.SELLER_TEST_DELIVERY_PDF
-    ?? {name:'delivery.pdf',mimeType:'application/pdf',buffer:makePdf(lines)};
-  await page.getByLabel('Invoice file').setInputFiles(file);
-  await expect(page.getByLabel('Invoice type')).toHaveValue('Fee');
-  await expect(page.getByLabel('Invoice quantity',{exact:true})).toHaveValue('1');
-  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('1223');
-  await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('58.24');
+  const uploadedPaths = process.env.SELLER_TEST_FLIPKART_PDFS
+    ? JSON.parse(process.env.SELLER_TEST_FLIPKART_PDFS) : {};
+  for (const [index,doc] of docs.entries()) {
+    await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+    const invoice = page.getByRole('group',{name:`Invoice ${index+1}`,exact:true});
+    const file = uploadedPaths[doc.name] ?? {name:`${doc.name}.pdf`,mimeType:'application/pdf',buffer:makePdf([
+      'Flipkart Tax Invoice', 'Sold By: Example Seller', `Invoice Number: TEST-${index+1}`, ...doc.lines,
+    ])};
+    await invoice.getByLabel('Invoice file').setInputFiles(file);
+    await expect(invoice.getByLabel('Invoice type')).toHaveValue(doc.kind);
+    await expect(invoice.getByLabel('Invoice quantity',{exact:true})).toHaveValue('1');
+    await expect(invoice.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue(String(doc.amount));
+    await expect(invoice.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue(String(doc.gst));
+    await expect(invoice.getByLabel('Invoice discount (₹)',{exact:true})).toHaveValue(String(doc.discount??''));
+  }
+  await page.getByLabel('Actual payment (₹)').fill('8721');
   await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save Entry'}).click();
+  await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
+  expect(db.equipment_purchases).toHaveLength(1);
+  expect(db.equipment_purchases[0]).toMatchObject({qty:1,rate:8576,actual_payment:8721,purchase_discount:1134});
+  expect(db.equipment_purchases[0].invoice_details).toHaveLength(3);
+  expect(uploads).toEqual(['POST','POST','POST']);
+  const row = page.getByRole('row').filter({hasText:'Verified & matched'});
+  await expect(row.getByRole('cell',{name:'₹8,721.00',exact:true})).toHaveCount(2);
+  await expect(row.getByRole('cell',{name:'₹1,202.00',exact:true})).toBeVisible();
+  await expect(row.getByRole('cell',{name:'Reconciled',exact:true})).toBeVisible();
+
+  await row.getByRole('button',{name:'Add invoices',exact:true}).click();
+  await page.getByRole('button',{name:'Remove invoice',exact:true}).click();
+  await page.getByLabel('Actual payment (₹)').fill('8710');
   await page.getByRole('button',{name:'Save reconciliation'}).click();
-  await expect(page.getByText('Verified & matched',{exact:true})).toBeVisible();
-  expect(db.equipment_purchases[0]).toMatchObject({qty:1,rate:7442,actual_payment:8721});
-  expect(db.equipment_purchases[0].invoice_details[2]).toMatchObject({kind:'Fee',amount:1223,gst:58.24});
+  await expect(page.locator('.invoice-status')).toContainText('Amount mismatch');
+  await expect(page.getByRole('row').filter({hasText:'Amount mismatch'}).getByText('₹11.00',{exact:true})).toBeVisible();
+  expect(db.equipment_purchases[0]).toMatchObject({qty:1,actual_payment:8710});
+  expect(db.equipment_purchases[0].invoice_details).toHaveLength(3);
 });
