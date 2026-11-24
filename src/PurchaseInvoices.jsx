@@ -6,7 +6,7 @@ const textFields = [
   ['orderId', 'Invoice order ID'], ['platform', 'Marketplace'], ['product', 'Product description'],
 ];
 const amountFields = [
-  ['quantity', 'Invoice quantity'], ['unitPrice', 'Invoice unit price (₹)'],
+  ['quantity', 'Invoice quantity'], ['unitPrice', 'Invoice unit price before discount (₹)'],
   ['discount', 'Invoice discount (₹)'], ['amount', 'Invoice total (₹)'], ['gst', 'Documented GST (₹)'],
 ];
 
