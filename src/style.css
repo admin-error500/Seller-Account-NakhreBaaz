@@ -9,3 +9,8 @@
 
 /* Raw materials: compact unit dropdown with quantity beside it. */
 @media(min-width:651px){.entry-form .fields:has(.material-unit-field){grid-template-columns:minmax(0,1.35fr) minmax(0,1.15fr) minmax(105px,.65fr) minmax(130px,.85fr);gap:18px}.entry-form .fields:has(.material-unit-field) .material-unit-field{grid-column:3}.entry-form .fields:has(.material-unit-field) .material-qty-field{grid-column:4}}
+
+/* Keep invoice controls compact instead of stretching across grid cells. */
+.entry-form .tax-summary > div > button[type=button]{align-self:end;justify-self:start;width:max-content;max-width:100%;min-height:34px;padding:6px 12px;font-size:12px;line-height:1.4;color:#b42318;background:#fff5f5;border-color:#f5c6c6;}
+.entry-form .tax-summary > div > button[type=button]:hover{background:#fee4e2;}
+.entry-form .tax-summary > button[type=button]{justify-self:start;width:max-content;padding:7px 12px;font-size:13px;}
