@@ -9,7 +9,10 @@ export function parseInvoice(text) {
   const amountText=text.match(/Grand\s*Total\s*[:₹\s]*([\d,]+\.\d{2})/i)?.[1];
   const amount=amountText?Number(amountText.replace(/,/g,'')):null;
   const kind=/Protect Promise Fee|Handling Fee|Platform Fee/i.test(text)?'Fee':'Product';
-  return {reference,orderId,supplier,amount,kind,reviewRequired:true};
+  const totalRow=text.match(/(?:^|\n)\s*Total\s+(\d+)\s+([\d,.]+)\s+(-?[\d,.]+)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)/i);
+  const num=v=>Number(v.replace(/,/g,''));
+  const gst=totalRow&&amount!==null&&Math.abs(num(totalRow[6])-amount)<0.01&&Math.abs(num(totalRow[4])+num(totalRow[5])-amount)<0.011?num(totalRow[5]):null;
+  return {reference,orderId,supplier,amount,kind,gst,reviewRequired:true};
 }
 export async function readInvoice(file){
   if(file.size>10485760)throw Error('Invoice exceeds 10 MB');
