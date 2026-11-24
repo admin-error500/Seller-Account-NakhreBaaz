@@ -187,7 +187,7 @@ test('saves material and equipment purchases with multiple manually verified inv
       await page.getByRole('combobox',{name:'Unit',exact:true}).selectOption('ml');
     }
     await page.getByLabel('Quantity',{exact:true}).fill('2');
-    await page.getByLabel('Unit Price (₹)',{exact:true}).fill('50');
+    await page.getByLabel('Item unit price before discount (₹)',{exact:true}).fill('50');
     await page.getByRole('combobox',{name:'GST Rate (%)',exact:true}).selectOption('0');
     await page.getByRole('combobox',{name:'GST included in unit price?',exact:true}).selectOption('No');
     await page.getByLabel('Actual payment (₹)').fill('100');
@@ -249,7 +249,7 @@ test('reads Amazon wrapped product and shipping rows without applying shipping d
   await page.getByLabel('Invoice file').setInputFiles(file);
   await expect(page.getByLabel('Product description')).toHaveValue(/Thermal.*Label/i);
   await expect(page.getByLabel('Invoice quantity',{exact:true})).toHaveValue('1');
-  await expect(page.getByLabel('Invoice unit price (₹)',{exact:true})).toHaveValue('423.73');
+  await expect(page.getByLabel('Invoice unit price before discount (₹)',{exact:true})).toHaveValue('423.73');
   await expect(page.getByLabel('Invoice discount (₹)',{exact:true})).toHaveValue('100.85');
   await expect(page.getByLabel('Purchase discount (₹)',{exact:true})).toHaveValue('0');
   await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('76.27');
@@ -348,6 +348,12 @@ test('reconciles all three Flipkart PDFs against one purchase', async ({page}) =
     await expect(invoice.getByLabel('Invoice discount (₹)',{exact:true})).toHaveValue(String(doc.discount??''));
   }
   await page.getByLabel('Actual payment (₹)').fill('8721');
+  const summary = page.getByLabel('Purchase cost summary');
+  await expect(summary.getByText('Item invoices after discounts').locator('..')).toContainText('₹7,442.00');
+  await expect(summary.getByText('Fee invoices',{exact:true}).locator('..')).toContainText('₹1,279.00');
+  await expect(summary.getByText('Received invoice total',{exact:true}).locator('..')).toContainText('₹8,721.00');
+  await expect(summary.getByText('Actual payment',{exact:true}).locator('..')).toContainText('₹8,721.00');
+  await expect(page.getByText('Estimated item subtotal before discounts',{exact:true})).toHaveCount(0);
   await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
   await page.getByRole('button',{name:'Save Entry'}).click();
   await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
