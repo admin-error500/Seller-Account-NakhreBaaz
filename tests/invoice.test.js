@@ -128,3 +128,20 @@ test('Flipkart fills GST-inclusive coupon discounts and ignores adjacent address
   const inconsistent = parseInvoice(lines.join('\n').replace('1,134.00','1,135.00'));
   assert.equal(inconsistent.discount, null);
 });
+
+test('Amazon wrapped items and shipping discounts reconcile against the two-column total', () => {
+  const text = [
+    'Amazon Tax Invoice', 'Sold By: Example Supplier Ltd', 'GST Registration No: 27ABCDE1234F1Z5',
+    'Invoice Number: TEST-1', 'Order Number: 402-1234567-1123456',
+    '1 Thermal Label Roll', '4 x 6 inch, pack of two',
+    '₹423.73 ₹0.00 1 ₹423.73 18% IGST ₹76.27 ₹500.00',
+    'Shipping Charges', '₹100.85 -₹100.85 ₹0.00 18% IGST ₹0.00 ₹0.00',
+    'TOTAL: ₹76.27 ₹500.00',
+  ].join('\n');
+  const invoice = parseInvoice(text);
+  assert.deepEqual([invoice.product,invoice.quantity,invoice.unitPrice,invoice.amount,invoice.gst,invoice.discount,
+    invoice.productDiscount,invoice.gstRate,invoice.multipleProducts,invoice.gstin],
+    ['Thermal Label Roll',1,423.73,500,76.27,100.85,0,18,false,'27ABCDE1234F1Z5']);
+  const inconsistent = parseInvoice(text.replace('TOTAL: ₹76.27','TOTAL: ₹70.27'));
+  assert.equal(inconsistent.gst, null);
+});

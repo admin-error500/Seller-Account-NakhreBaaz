@@ -79,13 +79,14 @@ function applyInvoice(line, automatic=false) {
   const normalized=normalizeInvoiceKey(line.product);
   const matches=normalized?data.products.filter(item=>
     [item.sku,item.name].some(value=>normalizeInvoiceKey(value)===normalized)): [];
+  const productDiscount=line.productDiscount??line.discount;
   const values={supplier:line.supplier,invoice:line.reference,purchasePlatform:line.platform,purchaseOrderId:line.orderId,
-    qty:line.quantity,rate:line.unitPrice,gstRate:line.gstRate,purchaseDiscount:line.multipleProducts?null:line.discount};
+    qty:line.quantity,rate:line.unitPrice,gstRate:line.gstRate,purchaseDiscount:line.multipleProducts?null:productDiscount};
   if (page==='purchases'&&matches.length===1) values.productId=matches[0].id;
   if (!line.multipleProducts&&page==='materialPurchases') values.materialName=line.product;
   if (!line.multipleProducts&&page==='equipmentPurchases') values.name=line.product;
   if (line.unitPrice!=null&&line.quantity>0&&line.amount!=null&&line.gst!=null) {
-    const base=line.unitPrice*line.quantity-(line.discount??0);
+    const base=line.unitPrice*line.quantity-(productDiscount??0);
     if (Math.abs(base+line.gst-line.amount)<=.05) values.gstInclusive='No';
     else if (Math.abs(base-line.amount)<=.05) values.gstInclusive='Yes';
   }

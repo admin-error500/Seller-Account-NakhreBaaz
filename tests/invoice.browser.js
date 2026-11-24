@@ -216,3 +216,36 @@ test('autofills the discount and GST from a Flipkart printer PDF', async ({page}
   await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('7442');
   await expect(page.getByLabel('Invoice order ID',{exact:true})).toHaveValue('');
 });
+
+test('reads Amazon wrapped product and shipping rows without applying shipping discount to the product', async ({page}) => {
+  const {db} = await useSellerApi(page);
+  await page.getByRole('button',{name:'Material Purchases',exact:true}).click();
+  await page.getByRole('button',{name:'+ Add Entry'}).click();
+  await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+  const lines = [
+    'Amazon Tax Invoice', 'Sold By: Example Supplier', 'Invoice Number: AM-42',
+    'Order Number: 402-1234567-1123456', '1 Thermal Label Roll', '4 x 6 inch, pack of two',
+    '423.73 0.00 1 423.73 18% IGST 76.27 500.00',
+    'Shipping Charges', '100.85 -100.85 0.00 18% IGST 0.00 0.00', 'TOTAL: 76.27 500.00',
+  ];
+  const file = process.env.SELLER_TEST_INVOICE_PDF
+    ?? {name:'amazon.pdf',mimeType:'application/pdf',buffer:makePdf(lines)};
+  await page.getByLabel('Invoice file').setInputFiles(file);
+  await expect(page.getByLabel('Product description')).toHaveValue(/Thermal.*Label/i);
+  await expect(page.getByLabel('Invoice quantity',{exact:true})).toHaveValue('1');
+  await expect(page.getByLabel('Invoice unit price (₹)',{exact:true})).toHaveValue('423.73');
+  await expect(page.getByLabel('Invoice discount (₹)',{exact:true})).toHaveValue('100.85');
+  await expect(page.getByLabel('Purchase discount (₹)',{exact:true})).toHaveValue('0');
+  await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('76.27');
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('500');
+  await page.getByRole('combobox',{name:'Category',exact:true}).selectOption('Other');
+  await page.getByRole('combobox',{name:'Unit',exact:true}).selectOption('pcs');
+  await page.getByLabel('Actual payment (₹)').fill('500');
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save Entry'}).click();
+  await expect(page.getByText('Entry saved',{exact:true})).toBeVisible();
+  await expect(page.getByText('Reconciled',{exact:true})).toBeVisible();
+  expect(db.material_purchases[0]).toMatchObject({
+    qty:1, rate:423.73, purchase_discount:0, invoice_details:[{amount:500,gst:76.27,discount:100.85}]
+  });
+});
