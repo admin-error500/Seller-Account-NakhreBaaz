@@ -37,3 +37,9 @@
 .platform-sales dt{color:#64748b;font-size:13px}
 .platform-sales dd{margin:0;font-weight:650}
 @media(max-width:850px){.purchase-nav summary{padding:9px}.purchase-nav>div{margin-left:0}}
+
+.purchase-row-actions{flex-wrap:wrap;max-width:220px;margin-left:auto}
+.purchase-row-actions .invoice-action{position:relative;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0}
+.invoice-action-tooltip{position:absolute;right:0;bottom:calc(100% + 4px);background:#101d32;color:#fff;border-radius:6px;padding:5px 8px;pointer-events:none;visibility:hidden;font-size:11px;white-space:nowrap}
+.invoice-action:is(:hover,:focus-visible) .invoice-action-tooltip{visibility:visible}
+.actions-cell:has(.invoice-action:is(:hover,:focus-visible)){z-index:3}

@@ -115,7 +115,16 @@ test('reads PDF and adds later fee without increasing stock or payment', async (
   await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
   await page.getByRole('button',{name:'Save Entry'}).click();
   await expect(page.getByText('Entry saved',{exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'Add invoices',exact:true}).click();
+  const actions = page.getByRole('row').filter({hasText:'FK-0042'}).locator('.actions-cell');
+  const view = actions.getByRole('button',{name:'View invoice FK-0042',exact:true});
+  await view.hover();
+  await expect(view.locator('.invoice-action-tooltip')).toBeVisible();
+  const add = actions.getByRole('button',{name:'Add invoices',exact:true});
+  await view.focus();
+  await page.keyboard.press('Tab');
+  await expect(add).toBeFocused();
+  await expect(add.locator('.invoice-action-tooltip')).toBeVisible();
+  await add.click();
   await page.getByLabel('Invoice type').selectOption('Fee');
   await page.getByLabel('Invoice supplier').fill('Marketplace');
   await page.getByLabel('Invoice number',{exact:true}).fill('FEE-0042');
@@ -276,7 +285,7 @@ test('shows invoice verification and payment match next to purchase attachments'
     await expect(badge).toHaveClass(`invoice-status invoice-status-${mode}`);
   }
   await page.getByRole('row').filter({has:page.getByRole('cell',{name:'Missing',exact:true})})
-    .getByRole('button',{name:'Upload file',exact:true}).click();
+    .getByRole('button',{name:'Upload file TEST-1',exact:true}).click();
   await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('500');
   const lines = ['Sold By: Example Supplier', 'Invoice Number: TEST-1', 'Total GST: 0.00','Grand Total: 500.00'];
   await page.getByLabel('Invoice file').setInputFiles({name:'invoice.pdf',mimeType:'application/pdf',buffer:makePdf(lines)});

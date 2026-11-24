@@ -3,6 +3,7 @@ import {purchasePages, purchaseDetails, purchaseTotals, parseMoney, taxDetails, 
 import {prepareInvoices, uploadInvoices, discardInvoiceUploads, invoiceSaveError, isDefinitiveWriteError} from './purchaseInvoiceStorage.js';
 import React,{useState,useMemo,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
+import {Eye, FilePlus, FileCheck, Upload} from 'lucide-react';
 import './style.css';
 import {supabase,configured,fetchAll,insertEntry,updateProduct,deleteEntry,updatePurchaseInvoices,fromRow,findPurchase,insertPurchase} from './supabase';
 const sizes=['14','16','18','20','22','24','26','28','30','32','34','36','38','40','42','44','46','48','S','M','L','XL','XXL','3XL'];
@@ -43,6 +44,33 @@ function InvoiceStatus({row}) {
     {reason||'Verified & matched'}
   </span>;
 }
+function InvoiceAction({icon:Icon,label,onClick,disabled}) {
+  return <button type="button" className="action-edit invoice-action"
+    aria-label={label} onClick={onClick} disabled={disabled}>
+    <Icon size={16} aria-hidden="true"/>
+    <span className="invoice-action-tooltip" aria-hidden="true">{label}</span>
+  </button>;
+}
+
+function PurchaseInvoiceActions({row,saving,viewInvoice,openAttachment}) {
+  const invoices=row.invoiceDetails??[];
+  const attachments=new Map(invoices.filter(invoice=>invoice.path).map(invoice=>[invoice.path,invoice.reference]));
+  if (row.invoicePath&&!attachments.has(row.invoicePath)) attachments.set(row.invoicePath,row.invoice);
+  const legacyNeedsVerification=row.invoice&&!invoices.some(invoice=>
+    normalizeInvoiceKey(invoice.reference)===normalizeInvoiceKey(row.invoice));
+  return <>
+    {[...attachments].map(([path,reference])=><InvoiceAction key={path} icon={Eye}
+      label={reference?`View invoice ${reference}`:'View invoice'} onClick={()=>viewInvoice(path)}/>)}
+    {legacyNeedsVerification&&<InvoiceAction icon={FileCheck} label={`Verify ${row.invoice}`}
+      disabled={saving} onClick={()=>openAttachment(row,-1)}/>}
+    {invoices.map((invoice,index)=>!invoice.verified||!invoiceAttachment(row,invoice)?
+      <InvoiceAction key={index} icon={invoice.verified?Upload:FileCheck}
+        label={`${invoice.verified?'Upload file':'Verify invoice'} ${invoice.reference}`}
+        disabled={saving} onClick={()=>openAttachment(row,index)}/>:null)}
+    <InvoiceAction icon={FilePlus} label="Add invoices" disabled={saving} onClick={()=>openAttachment(row)}/>
+  </>;
+}
+
 function PurchaseAmounts({row}) {
   const amounts=purchaseDetails(row);
   return <><td>{rupees(amounts.paid)}{!amounts.hasActualPayment&&<small className="legacy-payment">Legacy estimate</small>}</td>
@@ -305,25 +333,16 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
     disabled={saving||invoiceLines.some(line=>line.reading)}>Save reconciliation</button>
     <button type="button" disabled={saving} onClick={()=>{setAttachment(null);setInvoiceLines([])}}>Cancel</button></div>
 </form>}<section><div className="toolbar"><h2>Entries ({data[page].length})</h2><button onClick={()=>csv(page)}>Export CSV</button></div><div className="tablewrap"><table><thead><tr>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><th key={k}>{fieldLabel(k)}</th>)}{page==='materialPurchases'&&<th>Material</th>}{['products','materials'].includes(page)&&<th>Available</th>}{isPurchase&&<th>Invoices / Order</th>}{isPurchase&&<><th>Actual payment</th><th>Received invoice total</th><th>Documented GST</th><th>Reconciliation</th></>}
-{page==='sales'&&<><th>GST Amount</th><th>Total Incl. GST</th></>}{(page==='products'||isAdmin)&&<th className="actions-head">Actions</th>}</tr></thead><tbody>{[...data[page]].reverse().map(row=><tr key={row.id}>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><td key={k}>{display(row,k)}</td>)}{page==='materialPurchases'&&<td>{display(row,'materialId')}</td>}{page==='products'&&<td>{number(stock[row.id])}</td>}{page==='materials'&&<td>{number(materialStock[row.id])}</td>}{isPurchase&&<td className="invoice-cell">
+{page==='sales'&&<><th>GST Amount</th><th>Total Incl. GST</th></>}{(page==='products'||isPurchase||isAdmin)&&<th className="actions-head">Actions</th>}</tr></thead><tbody>{[...data[page]].reverse().map(row=><tr key={row.id}>{Object.keys(fields).filter(k=>page!=='materialPurchases'||!['materialName','materialCategory','materialUnit'].includes(k)).map(k=><td key={k}>{display(row,k)}</td>)}{page==='materialPurchases'&&<td>{display(row,'materialId')}</td>}{page==='products'&&<td>{number(stock[row.id])}</td>}{page==='materials'&&<td>{number(materialStock[row.id])}</td>}{isPurchase&&<td className="invoice-cell">
   <InvoiceStatus row={row}/>
   <div>{row.purchasePlatform} {row.purchaseOrderId}</div>
-  {row.invoicePath&&<button className="compact-button" onClick={()=>viewInvoice(row.invoicePath)}>View invoice</button>}
-  {row.invoice&&!(row.invoiceDetails??[]).some(line=>normalizeInvoiceKey(line.reference)===normalizeInvoiceKey(row.invoice))&&
-    <button className="compact-button" disabled={saving} onClick={()=>openAttachment(row,-1)}>Verify {row.invoice}</button>}
-  {(row.invoiceDetails??[]).map((line,index)=><div key={index}>
-    {line.kind} · {line.reference}
-    {line.path&&<button className="compact-button" onClick={()=>viewInvoice(line.path)}>View</button>}
-    {(!line.verified||!invoiceAttachment(row,line))&&
-      <button className="compact-button" disabled={saving} onClick={()=>openAttachment(row,index)}>
-        {line.verified?'Upload file':'Verify'}
-      </button>}
-  </div>)}
-  <button className="compact-button" disabled={saving} onClick={()=>openAttachment(row)}>Add invoices</button>
+  {(row.invoiceDetails??[]).map((line,index)=><div key={index}>{line.kind} · {line.reference}</div>)}
 </td>}
 {isPurchase&&<PurchaseAmounts row={row}/>}
 {page==='sales'&&<><td>{rupees(taxDetails(row.qty,row.price,row.gstRate,row.gstInclusive).tax)}</td>
-<td>{rupees(taxDetails(row.qty,row.price,row.gstRate,row.gstInclusive).total)}</td></>}{(page==='products'||isAdmin)&&<td className="actions-cell"><div className="row-actions">{page==='products'&&<><button type="button" className="action-edit" onClick={()=>setEditingProduct({...row})}>Edit</button><button type="button" className="action-edit" onClick={()=>{setAdjustingProduct(row);setAdjustQty(String(number(stock[row.id])))}}>Adjust Stock</button></>}{isAdmin&&<button type="button" className="action-delete" disabled={saving} title="Delete this entry permanently" onClick={()=>removeRecord(page,row)}>Delete</button>}</div></td>}</tr>)}{!data[page].length&&<tr><td className="empty-state" colSpan={15}>No records yet. Add your first entry to get started.</td></tr>}</tbody></table></div></section></>}
+<td>{rupees(taxDetails(row.qty,row.price,row.gstRate,row.gstInclusive).total)}</td></>}{(page==='products'||isPurchase||isAdmin)&&<td className="actions-cell"><div className={isPurchase?"row-actions purchase-row-actions":"row-actions"}>{isPurchase&&
+  <PurchaseInvoiceActions row={row} saving={saving} viewInvoice={viewInvoice} openAttachment={openAttachment}/>}
+{page==='products'&&<><button type="button" className="action-edit" onClick={()=>setEditingProduct({...row})}>Edit</button><button type="button" className="action-edit" onClick={()=>{setAdjustingProduct(row);setAdjustQty(String(number(stock[row.id])))}}>Adjust Stock</button></>}{isAdmin&&<button type="button" className="action-delete" disabled={saving} title="Delete this entry permanently" onClick={()=>removeRecord(page,row)}>Delete</button>}</div></td>}</tr>)}{!data[page].length&&<tr><td className="empty-state" colSpan={15}>No records yet. Add your first entry to get started.</td></tr>}</tbody></table></div></section></>}
 {page==='monthly'&&<><section className="monthly-report"><div className="toolbar"><div><h2>Monthly Business Summary</h2><p>Choose a month to review all recorded business activity.</p></div><label>Report Month<input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)}/></label></div><div className="report-kpis"><article><small>Sales billed</small><strong>{rupees(saleTotal)}</strong></article><article><small>Purchases + equipment</small><strong>{rupees(purchaseTotal+materialTotal+equipmentTotal)}</strong></article><article><small>Returns / refunds</small><strong>{rupees(refundTotal)}</strong></article><article><small>Estimated cash movement</small><strong>{rupees(cashEstimate)}</strong></article></div><h2>Monthly Breakdown</h2><div className="tablewrap"><table><thead><tr><th>Metric</th><th>Amount</th></tr></thead><tbody>{monthlyReportRows.map(([name,amount])=><tr key={name}><td>{name}</td><td>{rupees(amount)}</td></tr>)}</tbody></table></div><h2>Sales by Marketplace</h2><div className="tablewrap"><table><thead><tr><th>Platform</th><th>Orders</th><th>Units</th><th>Billed Sales</th></tr></thead><tbody>{channels.map(ch=>{const rows=mSales.filter(x=>x.platform===ch);return <tr key={ch}><td>{ch}</td><td>{rows.length}</td><td>{sum(rows,x=>number(x.qty))}</td><td>{rupees(sum(rows,x=>taxDetails(x.qty,x.price,x.gstRate,x.gstInclusive).total))}</td></tr>})}</tbody></table></div><button className="primary" onClick={()=>{const lines=[['Metric','Amount (INR)'],...monthlyReportRows].map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(','));exportFile('nakhrebaaz-monthly-'+reportMonth+'.csv',lines.join('\r\n'),'text/csv')}}>Download Monthly Report (CSV)</button><p className="report-warning">This is a recorded cash-flow estimate, NOT net profit or a GST return. Unsold inventory, depreciation, ITC eligibility, GST adjustments, payment timing and opening balances are not fully accounted for. Confirm GST figures with your accountant before filing.</p></section></>}
 {page==='reports'&&<><section><h2>CSV Exports</h2><div className="buttons">{Object.keys(initial).map(k=><button key={k} onClick={()=>csv(k)}>Export {k} ({data[k].length})</button>)}</div></section><section><h2>Backup & Restore</h2><button className="primary" onClick={()=>exportFile('nakhrebaaz-backup-'+today()+'.json',JSON.stringify(data,null,2),'application/json')}>Download JSON Backup</button><p>Cloud restore requires a validated migration; direct JSON restore disabled.</p></section><section><h2>Limitations</h2><p>Supabase-backed records with email login; no marketplace API import, automatic refund reconciliation or GST accounting. Keep backups. Do not treat cash movement as net profit.</p></section></>}
 </main></div>}
