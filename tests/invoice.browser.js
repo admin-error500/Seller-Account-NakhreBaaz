@@ -51,6 +51,12 @@ async function imageInvoice(page, mime) {
   return Buffer.from(data,'base64');
 }
 
+async function openPurchasePage(page, name) {
+  const button = page.getByRole('button',{name,exact:true});
+  if (!await button.isVisible()) await page.getByText('Purchases',{exact:true}).click();
+  await button.click();
+}
+
 async function useSellerApi(page, equipmentPurchases = []) {
   const db = {products:[{id:sku,sku:'PLAIN-M',name:'Plain T-Shirt',size:'M',color:'Black',type:'BLANK'}],purchases:[],material_purchases:[],equipment_purchases:equipmentPurchases};
   const uploads = [];
@@ -95,7 +101,7 @@ async function useSellerApi(page, equipmentPurchases = []) {
 
 test('reads PDF and adds later fee without increasing stock or payment', async ({page}) => {
   const {db,uploads} = await useSellerApi(page);
-  await page.getByRole('button',{name:'T-Shirt Purchases',exact:true}).click();
+  await openPurchasePage(page, 'T-Shirt Purchases');
   await page.getByRole('button',{name:'+ Add Entry'}).click();
   await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
   await page.getByLabel('Invoice file').setInputFiles({name:'product.pdf',mimeType:'application/pdf',buffer:makePdf(sample)});
@@ -128,7 +134,7 @@ test('reads PDF and adds later fee without increasing stock or payment', async (
   await expect(row.getByText('Partially received')).toBeVisible();
   await page.getByRole('button',{name:'Overview',exact:true}).click();
   await expect(page.getByText('Stock Units').locator('..').getByText('1',{exact:true})).toBeVisible();
-  await expect(page.getByText('Pending purchase reconciliation').locator('..').getByText('₹1,223.00')).toBeVisible();
+  await expect(page.getByText('Pending Invoice Reconciliation').locator('..').getByText('₹1,223.00')).toBeVisible();
   await page.getByRole('button',{name:'Monthly Business Report'}).click();
   await expect(page.getByRole('row').filter({hasText:'Documented purchase GST'}).getByText('₹1,143.76')).toBeVisible();
 });
@@ -136,7 +142,7 @@ test('reads PDF and adds later fee without increasing stock or payment', async (
 for (const format of ['png','jpeg','scanned pdf']) {
   test(`uses local OCR for ${format}`, async ({page}) => {
     await useSellerApi(page);
-    await page.getByRole('button',{name:'Machines & Equipment',exact:true}).click();
+    await openPurchasePage(page, 'Machines & Equipment');
     await page.getByRole('button',{name:'+ Add Entry'}).click();
     await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
     const imageType = format==='png'?'image/png':'image/jpeg';
@@ -163,7 +169,7 @@ test('saves material and equipment purchases with multiple manually verified inv
     ['Material Purchases','material_purchases','Material Name'],
     ['Machines & Equipment','equipment_purchases','Product Name']
   ]) {
-    await page.getByRole('button',{name:category,exact:true}).click();
+    await openPurchasePage(page, category);
     await page.getByRole('button',{name:'+ Add Entry'}).click();
     await page.getByLabel(name,{exact:true}).fill('Test purchase');
     if (table==='material_purchases') {
@@ -200,7 +206,7 @@ test('saves material and equipment purchases with multiple manually verified inv
 
 test('autofills the discount and GST from a Flipkart printer PDF', async ({page}) => {
   await useSellerApi(page);
-  await page.getByRole('button',{name:'Machines & Equipment',exact:true}).click();
+  await openPurchasePage(page, 'Machines & Equipment');
   await page.getByRole('button',{name:'+ Add Entry'}).click();
   await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
   const lines = [
@@ -219,7 +225,7 @@ test('autofills the discount and GST from a Flipkart printer PDF', async ({page}
 
 test('reads Amazon wrapped product and shipping rows without applying shipping discount to the product', async ({page}) => {
   const {db} = await useSellerApi(page);
-  await page.getByRole('button',{name:'Material Purchases',exact:true}).click();
+  await openPurchasePage(page, 'Material Purchases');
   await page.getByRole('button',{name:'+ Add Entry'}).click();
   await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
   const lines = [
@@ -262,7 +268,7 @@ test('shows invoice verification and payment match next to purchase attachments'
   ];
   await useSellerApi(page, records.map(([name, actual_payment, invoice_details], index) =>
     ({id:String(index), name, actual_payment, invoice_details, invoice_revision:0})));
-  await page.getByRole('button',{name:'Machines & Equipment',exact:true}).click();
+  await openPurchasePage(page, 'Machines & Equipment');
   for (const [name,,, label, mode] of records) {
     const badge = page.getByRole('row').filter({has:page.getByRole('cell',{name,exact:true})})
       .locator('.invoice-status');
@@ -279,4 +285,20 @@ test('shows invoice verification and payment match next to purchase attachments'
   await page.getByRole('button',{name:'Save reconciliation'}).click();
   await expect(page.getByRole('row').filter({has:page.getByRole('cell',{name:'Missing',exact:true})})
     .locator('.invoice-status')).toHaveClass('invoice-status invoice-status-ok');
+});
+
+test('overview shows five cards, a conditional mismatch alert and grouped purchase navigation', async ({page}) => {
+  await useSellerApi(page,[{id:'1',name:'Printer',actual_payment:500,
+    invoice_details:[{kind:'Product',verified:true,amount:525,gst:0}]}]);
+  const stats = page.locator('.overview-stats article');
+  await expect(stats).toHaveCount(5);
+  await expect(stats.filter({hasText:'Total Purchase Payments'})).toContainText('₹500.00');
+  await expect(page.getByRole('status')).toContainText('₹25.00');
+  await expect(page.getByRole('button',{name:'T-Shirt Purchases',exact:true})).toBeHidden();
+  await openPurchasePage(page,'T-Shirt Purchases');
+  await expect(page.getByRole('heading',{name:'T-Shirt Purchases',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Material Purchases',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Machines & Equipment',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Monthly Business Report'}).click();
+  await expect(page.getByRole('row').filter({hasText:'Marketplace fees + shipping'})).toBeVisible();
 });
