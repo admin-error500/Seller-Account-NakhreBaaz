@@ -113,3 +113,18 @@ test('Amazon extracts a tabular IGST line and avoids applying an aggregate quant
   const mixed = parseInvoice(header + first + '\n' + second + '\nTotal: ₹630.00');
   assert.deepEqual([mixed.multipleProducts,mixed.quantity,mixed.unitPrice,mixed.gst], [true,null,null,30]);
 });
+
+test('Flipkart fills GST-inclusive coupon discounts and ignores adjacent address headings', () => {
+  const lines = [
+    'Flipkart', 'Order ID: Bill To', 'Order Date: 24-11-2026',
+    'Single Function Printer: 1 ₹8,576.00 ₹−1,134.00 ₹6,306.78 ₹1,135.22 ₹7,442.00',
+    'Grand Total ₹7,442.00',
+  ];
+  for (const total of ['', 'Total 1 ₹8,576.00 ₹−1,134.00 ₹6,306.78 ₹1,135.22 ₹7,442.00']) {
+    const invoice = parseInvoice([...lines, total].join('\n'));
+    assert.deepEqual([invoice.orderId, invoice.quantity, invoice.unitPrice, invoice.discount, invoice.gst, invoice.amount],
+      ['', 1, 8576, 1134, 1135.22, 7442]);
+  }
+  const inconsistent = parseInvoice(lines.join('\n').replace('1,134.00','1,135.00'));
+  assert.equal(inconsistent.discount, null);
+});
