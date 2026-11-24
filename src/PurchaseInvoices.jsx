@@ -1,0 +1,86 @@
+import React from 'react';
+import {invoiceFileType, readInvoice} from './invoiceReader.js';
+
+const textFields = [
+  ['supplier', 'Invoice supplier'], ['reference', 'Invoice number'], ['gstin', 'Supplier GSTIN'],
+  ['orderId', 'Invoice order ID'], ['platform', 'Marketplace'], ['product', 'Product description'],
+];
+const amountFields = [
+  ['quantity', 'Invoice quantity'], ['unitPrice', 'Invoice unit price (₹)'],
+  ['discount', 'Invoice discount (₹)'], ['amount', 'Invoice total (₹)'], ['gst', 'Documented GST (₹)'],
+];
+
+export default function PurchaseInvoices({lines, setLines, onApply, onExtract, saving, viewInvoice}) {
+  const active = React.useRef(false);
+  const [reviewed, setReviewed] = React.useState(false);
+  React.useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+  const change = (id, values) => {
+    setReviewed(false);
+    setLines(previous => previous.map(line => line.id === id ? {...line, ...values} : line));
+  };
+  async function selectFile(line, event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      invoiceFileType(file);
+    } catch (error) {
+      event.target.value = '';
+      change(line.id, {notice: error.message});
+      return;
+    }
+    const replacement = line.file ? Object.fromEntries([...textFields, ...amountFields].map(([key]) => [key, ''])) : {};
+    change(line.id, {...replacement, reading: true, file, notice: 'Reading invoice…'});
+    try {
+      const parsed = await readInvoice(file);
+      if (!active.current) return;
+      const extracted = Object.fromEntries(Object.entries(parsed).filter(([, value]) => value != null && value !== ''));
+      change(line.id, {...extracted, gstRate: parsed.gstRate, notice: 'Review the extracted fields before saving.'});
+      onExtract?.({...line, ...replacement, ...extracted, gstRate: parsed.gstRate});
+    } catch (error) {
+      if (active.current) change(line.id, {notice: `Automatic reading failed. Enter the invoice details manually. ${error.message}`});
+    } finally {
+      if (active.current) change(line.id, {reading: false});
+    }
+  }
+
+  return <div className="tax-summary invoice-editor">
+    <strong>Purchase invoices</strong>
+    <small>Verify the totals and GST on each document. Enter 0 for GST only when the invoice shows no tax.</small>
+    {lines.map((line, index) => <fieldset className="invoice-fields" key={line.id} disabled={saving || line.reading}>
+      <legend>Invoice {index + 1}</legend>
+      <label>Invoice file<input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp"
+        onChange={event => selectFile(line, event)}/></label>
+      {line.path && <button type="button" className="compact-button" onClick={() => viewInvoice(line.path)}>View existing file</button>}
+      <label>Invoice type<select value={line.kind} onChange={event => change(line.id, {kind: event.target.value})}>
+        <option>Product</option><option>Fee</option>
+      </select></label>
+      {textFields.map(([key, label]) => <label key={key}>{label}
+        <input required={key === 'reference' || key === 'supplier'} value={line[key] ?? ''}
+          onChange={event => change(line.id, {[key]: event.target.value})}/></label>)}
+      {amountFields.map(([key, label]) => <label key={key}>{label}
+        <input required={key === 'amount' || key === 'gst'} type="number" min="0"
+          step={key === 'quantity' ? 'any' : '0.01'} value={line[key] ?? ''}
+          onChange={event => change(line.id, {[key]: event.target.value})}/></label>)}
+      {line.notice && <small className="invoice-notice" role="status">{line.notice}</small>}
+      <div className="invoice-actions">
+        {onApply && line.kind === 'Product' && <button type="button" className="compact-button" onClick={() => onApply(line)}>Apply to purchase</button>}
+        <button type="button" className="compact-button" onClick={() => {
+          setReviewed(false);
+          setLines(previous => previous.filter(item => item.id !== line.id));
+        }}>Remove invoice</button>
+      </div>
+    </fieldset>)}
+    <button type="button" className="compact-button" disabled={saving} onClick={() => {
+      setReviewed(false);
+      setLines(previous => [...previous, {id: crypto.randomUUID(), kind: 'Product'}]);
+    }}>+ Add Invoice</button>
+    {lines.length > 0 && <label className="invoice-verification">
+      <input type="checkbox" required checked={reviewed} disabled={saving || lines.some(line => line.reading)}
+        onChange={event => setReviewed(event.target.checked)}/>
+      I verified the invoice details against the documents
+    </label>}
+  </div>;
+}

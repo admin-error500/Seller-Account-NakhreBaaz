@@ -1,30 +1,75 @@
-import {getDocument, GlobalWorkerOptions} from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-GlobalWorkerOptions.workerSrc=workerUrl;
+import {parseInvoice} from './invoiceParser.js';
+export {parseInvoice};
 
-export function parseInvoice(text) {
-  const reference=text.match(/Invoice\s*(?:Number|No\.?|#)\s*[:#]?\s*([A-Z0-9][A-Z0-9/-]+)/i)?.[1]||'';
-  const orderId=text.match(/Order\s*ID\s*[:#]?\s*([A-Z0-9-]+)/i)?.[1]||'';
-  const supplier=text.match(/Sold\s*By\s*:\s*([^\n,]+)/i)?.[1]?.trim()||'';
-  const amountText=text.match(/Grand\s*Total\s*[:₹\s]*([\d,]+\.\d{2})/i)?.[1];
-  const amount=amountText?Number(amountText.replace(/,/g,'')):null;
-  const kind=/Protect Promise Fee|Handling Fee|Platform Fee/i.test(text)?'Fee':'Product';
-  const totalRow=text.match(/(?:^|\n)\s*Total\s+(\d+)\s+([\d,.]+)\s+(-?[\d,.]+)\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)/i);
-  const num=v=>Number(v.replace(/,/g,''));
-  const gst=totalRow&&amount!==null&&Math.abs(num(totalRow[6])-amount)<0.01&&Math.abs(num(totalRow[4])+num(totalRow[5])-amount)<0.011?num(totalRow[5]):null;
-  return {reference,orderId,supplier,amount,kind,gst,reviewRequired:true};
+const MAX_BYTES = 10 * 1024 * 1024;
+const MAX_PAGES = 20;
+
+export function invoiceFileType(file) {
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  const mime = {pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp'}[extension];
+  if (!mime || (file.type && file.type !== mime && file.type !== 'application/octet-stream')) {
+    throw Error('Choose a PDF, JPG, PNG or WebP invoice.');
+  }
+  if (!file.size || file.size > MAX_BYTES) throw Error('Invoice files must be between 1 byte and 10 MB.');
+  return mime;
 }
-export async function readInvoice(file){
-  if(file.size>10485760)throw Error('Invoice exceeds 10 MB');
-  if(file.type!=='application/pdf')throw Error('Image invoices require manual entry in this version');
-  const doc=await getDocument({data:new Uint8Array(await file.arrayBuffer()),isEvalSupported:false}).promise;
+
+function pdfText(items) {
+  const rows = new Map();
+  for (const item of items) {
+    if (!item.str?.trim()) continue;
+    const [, , , , x, y] = item.transform;
+    const row = Math.round(y / 3) * 3;
+    if (!rows.has(row)) rows.set(row, []);
+    rows.get(row).push([x, item.str]);
+  }
+  return [...rows].sort(([a], [b]) => b - a)
+    .map(([, items]) => items.sort(([a], [b]) => a - b).map(([, content]) => content).join(' ')).join('\n');
+}
+
+export async function readInvoice(file) {
+  const type = invoiceFileType(file);
+  let workerPromise;
+  async function recognize(image) {
+    workerPromise ??= import('./invoiceOcr.js').then(module => module.createInvoiceOcr());
+    const worker = await workerPromise;
+    return (await worker.recognize(image)).data.text;
+  }
   try {
-    const pages=[];
-    for(let i=1;i<=doc.numPages;i++){
-      const page=await doc.getPage(i);
-      const content=await page.getTextContent();
-      pages.push(content.items.map(x=>x.str+(x.hasEOL?'\n':' ')).join(''));
+    if (type !== 'application/pdf') return parseInvoice(await recognize(file));
+    const [{getDocument, GlobalWorkerOptions}, {default: workerUrl}] = await Promise.all([
+      import('pdfjs-dist'), import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+    ]);
+    GlobalWorkerOptions.workerSrc = workerUrl;
+    const task = getDocument({data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false});
+    try {
+      const doc = await task.promise;
+      if (doc.numPages > MAX_PAGES) throw Error('Automatic reading supports invoices up to 20 pages.');
+      const pages = [];
+      for (let index = 1; index <= doc.numPages; index++) {
+        const page = await doc.getPage(index);
+        const content = pdfText((await page.getTextContent()).items);
+        if ((content.match(/[A-Za-z0-9]/g)?.length ?? 0) >= 50) {
+          pages.push(content);
+          continue;
+        }
+        const base = page.getViewport({scale: 1});
+        const viewport = page.getViewport({scale: Math.min(2.5, 2400 / Math.max(base.width, base.height))});
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        try {
+          await page.render({canvasContext: canvas.getContext('2d'), viewport}).promise;
+          pages.push(await recognize(canvas));
+        } finally {
+          canvas.width = canvas.height = 0;
+        }
+      }
+      return parseInvoice(pages.join('\n'));
+    } finally {
+      await task.destroy();
     }
-    return parseInvoice(pages.join('\n'));
-  } finally {await doc.destroy();}
+  } finally {
+    if (workerPromise) await workerPromise.then(worker => worker.terminate(), () => {});
+  }
 }
