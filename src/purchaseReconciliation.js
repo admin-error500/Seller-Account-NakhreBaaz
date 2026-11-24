@@ -27,12 +27,17 @@ export function purchaseDetails(purchase) {
   const total = documents.reduce((sum, invoice) => sum + paise(invoice.amount), 0);
   const tax = documents.reduce((sum, invoice) => sum + paise(invoice.gst), 0);
   const balance = paise(paid) - total;
-  const status = balance < 0 ? 'Mismatch'
+  const advanceApplied = paise(purchase.advanceApplied);
+  const due = advanceApplied > 0 ? Math.max(total - paise(paid) - advanceApplied, 0) : 0;
+  const status = advanceApplied > 0 ? (due > 0 ? 'Invoice verified' : 'Reconciled')
+    : balance < 0 ? 'Mismatch'
     : documents.length === 0 ? 'Pending'
       : balance === 0 ? 'Reconciled' : 'Partially received';
   return {
     paid, hasActualPayment, invoiceTotal: total / 100, tax: tax / 100, status,
-    pending: Math.max(balance, 0) / 100, mismatch: Math.max(-balance, 0) / 100,
+    pending: advanceApplied > 0 ? 0 : Math.max(balance, 0) / 100,
+    mismatch: advanceApplied > 0 ? 0 : Math.max(-balance, 0) / 100,
+    ...(advanceApplied > 0 && {advanceApplied: advanceApplied / 100, due: due / 100}),
     recordedTax: hasActualPayment ? tax / 100
       : money(product.tax + fees.reduce((sum, fee) => sum + number(fee.gst), 0)),
   };

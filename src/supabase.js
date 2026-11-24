@@ -3,10 +3,10 @@ const url=import.meta.env.VITE_SUPABASE_URL;
 const key=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 export const configured=Boolean(url&&key);
 export const supabase=configured?createClient(url,key):null;
-export const tables=['products','purchases','sales','returns','materials','materialPurchases','production','expenses','settlements','equipmentPurchases','stockAdjustments'];
-const tableName={materialPurchases:'material_purchases',equipmentPurchases:'equipment_purchases',stockAdjustments:'stock_adjustments'};
+export const tables=['products','purchases','sales','returns','materials','materialPurchases','production','expenses','settlements','equipmentPurchases','stockAdjustments','supplierAdvances','supplierAdvanceAllocations'];
+const tableName={materialPurchases:'material_purchases',equipmentPurchases:'equipment_purchases',stockAdjustments:'stock_adjustments',supplierAdvances:'supplier_advances',supplierAdvanceAllocations:'supplier_advance_allocations'};
 const columnName={productId:'product_id',materialId:'material_id',saleId:'sale_id',orderId:'order_id',blankId:'blank_id',printedId:'printed_id',otherCost:'other_cost',qtyChange:'qty_change'};
-const dateName={purchases:'purchased_on',sales:'sold_on',returns:'returned_on',materialPurchases:'purchased_on',production:'produced_on',expenses:'spent_on',settlements:'settled_on',equipmentPurchases:'purchased_on',stockAdjustments:'adjusted_on'};
+const dateName={purchases:'purchased_on',sales:'sold_on',returns:'returned_on',materialPurchases:'purchased_on',production:'produced_on',expenses:'spent_on',settlements:'settled_on',equipmentPurchases:'purchased_on',stockAdjustments:'adjusted_on',supplierAdvances:'paid_on'};
 const dbName=t=>tableName[t]||t;
 const toCamel=k=>k.replace(/_([a-z])/g,(_,c)=>c.toUpperCase());
 const toDb=k=>columnName[k]||k.replace(/[A-Z]/g,c=>'_'+c.toLowerCase());
@@ -63,4 +63,17 @@ export async function insertPurchase(table, purchase) {
     : await supabase.from(dbName(table)).insert(record).select().single();
   if (result.error) throw result.error;
   return result.data;
+}
+
+export async function saveAdvanceEntry(table, id, values) {
+  const record = {id, ...toRow(table, values)};
+  const source = supabase.from(dbName(table));
+  const {data, error} = await source.insert(record).select().single();
+  if (!error) return fromRow(table, data);
+  // A network failure can occur after commit. Retry with the same draft ID.
+  const {data: existing} = await source.select().eq('id', id).maybeSingle();
+  if (existing && Object.entries(record).every(([key,value]) => String(existing[key]) === String(value))) {
+    return fromRow(table, existing);
+  }
+  throw error;
 }

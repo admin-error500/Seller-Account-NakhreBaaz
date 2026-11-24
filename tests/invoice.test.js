@@ -165,3 +165,14 @@ test('uses the seller column and discards the Amazon billing heading', () => {
   assert.equal(parseInvoice(combined,'Sold By :\nExample Seller Private\nLIMITED').supplier,'Example Seller Private LIMITED');
   assert.equal(parseInvoice('Amazon\nSold By: Example Seller Billing Address:').supplier,'Example Seller');
 });
+
+test('an allocated supplier advance reduces the due without inflating direct payments', () => {
+  const row = {actualPayment:0,advanceApplied:4000,invoiceDetails:[{kind:'Product',verified:true,amount:10000,gst:0}]};
+  const details = purchaseDetails(row);
+  assert.equal(details.status,'Invoice verified');
+  assert.equal(details.advanceApplied,4000);
+  assert.equal(details.due,6000);
+  assert.equal(details.paid,0);
+  assert.equal(details.mismatch,0);
+  assert.equal(purchaseDetails({...row,actualPayment:6000}).status,'Reconciled');
+});
