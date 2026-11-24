@@ -145,3 +145,16 @@ test('Amazon wrapped items and shipping discounts reconcile against the two-colu
   const inconsistent = parseInvoice(text.replace('TOTAL: ₹76.27','TOTAL: ₹70.27'));
   assert.equal(inconsistent.gst, null);
 });
+
+test('reads a standalone delivery invoice with decimal quantity and no grand total label', () => {
+  const text = [
+    'Flipkart Tax Invoice', 'Sold By: Example Seller', 'Invoice Number: TEST-FA-1',
+    'Particulars SAC Qty Gross Taxable IGST Total', 'Amount Value',
+    'Delivery Charges 996819 1.0 ₹1223.00 ₹1164.76 ₹58.24 ₹1223.00',
+    'IGST 5.0 %', 'Total 1.0 ₹1223.00 ₹1164.76 ₹58.24 ₹1223.00',
+  ].join('\n');
+  const invoice = parseInvoice(text);
+  assert.deepEqual([invoice.amount,invoice.gst,invoice.quantity,invoice.unitPrice,invoice.product,invoice.kind,invoice.gstRate],
+    [1223,58.24,1,1223,'Delivery Charges','Fee',5]);
+  assert.equal(parseInvoice(text.replace(/Total 1.0[^\n]+/, 'Total 1.0 ₹1223.00 ₹1164.76 ₹1.00 ₹1223.00')).amount, null);
+});

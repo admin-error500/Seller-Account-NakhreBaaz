@@ -56,6 +56,21 @@ function amazonDiscountTable(text) {
   return {tax, total, discount:sum('discount') / 100, products:rows.filter(item => item.quantity != null)};
 }
 
+function serviceInvoiceTable(text) {
+  if (!/^[^\n]*\bSAC[ \t]+Qty[ \t]+Gross[^\n]*\bTaxable[^\n]*\bIGST[ \t]+Total\b/im.test(text)) return null;
+  const cell = String.raw`[ \t]+${currency}(${numeric})`;
+  const amounts = cell.repeat(4) + String.raw`[ \t]*$`;
+  const quantity = String.raw`(\d+(?:\.\d+)?)`;
+  const totals = [...text.matchAll(new RegExp(String.raw`^[ \t]*Total[ \t]+${quantity}${amounts}`, 'gim'))];
+  if (totals.length !== 1) return null;
+  const [qty,gross,taxable,gst,total] = totals[0].slice(1).map(value);
+  if (qty <= 0 || gross < 0 || taxable < 0 || gst < 0
+    || cents(taxable + gst) !== cents(total) || cents(gross) !== cents(total)) return null;
+  const lines = [...text.matchAll(new RegExp(String.raw`^[ \t]*([^\n]+?)[ \t]+\d{4,8}[ \t]+${quantity}${amounts}`, 'gim'))];
+  const description = lines.length === 1 ? lines[0][1].trim() : '';
+  return {quantity:qty,gross,taxable,gst,total,description,multiple:lines.length>1};
+}
+
 export function parseInvoice(raw) {
   const text = raw.normalize('NFKC').replace(/[\r\f]/g, '').replace(/[\u00a0\t]+/g, ' ').replace(/[−–](?=[ \t]*(?:₹|\d))/g, '-').replace(/-[ \t]*₹/g, '₹-');
   const reference = findText(text, String.raw`Invoice[ \t]*(?:Number|No\.?|#|ID)|Bill[ \t]*(?:No\.?|Number)|Tax Invoice(?=[ \t]*:)`, id);
@@ -69,9 +84,10 @@ export function parseInvoice(raw) {
   const orderId = platform === 'Flipkart'
     ? text.match(/\bOD\d{10,}\b/i)?.[0] ?? (/\d/.test(labeledOrder) ? labeledOrder : '')
     : labeledOrder;
+  const service = serviceInvoiceTable(text);
   const amazonTable = platform === 'Amazon' ? amazonDiscountTable(text) : null;
   const amount = findAmount(text, String.raw`Grand[ \t]+Total|Invoice[ \t]+Total|Total[ \t]+Invoice[ \t]+(?:Amount|Value)|Total[ \t]+Payable|Amount[ \t]+Payable`)
-    ?? findAmount(text, String.raw`Total[ \t]+Amount(?:[ \t]+(?:Including|Incl\.?)\s*GST)?|Total`) ?? amazonTable?.total ?? null;
+    ?? findAmount(text, String.raw`Total[ \t]+Amount(?:[ \t]+(?:Including|Incl\.?)\s*GST)?|Total`) ?? amazonTable?.total ?? service?.total ?? null;
   const taxable = findAmount(text, String.raw`(?:Total[ \t]+)?(?:Taxable[ \t]+(?:Amount|Value)|Subtotal(?:[ \t]+before[ \t]+tax)?)`);
   const totalGst = findAmount(text, String.raw`(?:Total[ \t]+(?:GST|Tax)(?:[ \t]+Amount)?|GST[ \t]+Amount)`);
   const parts = ['CGST', '[SU]GST|UTGST', 'IGST'].map(label =>
@@ -95,7 +111,7 @@ export function parseInvoice(raw) {
   const amazon = platform === 'Amazon' ? amazonTable?.products ?? amazonItems(text) : [];
   const amazonGst = amazon.length && amount != null && amazon.reduce((sum, item) => sum + cents(item.total), 0) === cents(amount)
     ? amazon.reduce((sum, item) => sum + cents(item.gst), 0) / 100 : null;
-  const declaredGst = totalGst ?? totalRow?.[4] ?? componentGst ?? (amazonTable?.total === amount ? amazonTable.tax : null) ?? amazonGst;
+  const declaredGst = totalGst ?? (service?.total === amount ? service.gst : null) ?? totalRow?.[4] ?? componentGst ?? (amazonTable?.total === amount ? amazonTable.tax : null) ?? amazonGst;
   const gst = declaredGst != null && amount != null && declaredGst >= 0 && declaredGst <= amount
     && (taxable == null || Math.abs(cents(taxable + declaredGst) - cents(amount)) <= 1)
     && (totalGst == null || componentGst == null || Math.abs(cents(totalGst) - cents(componentGst)) <= 1)
@@ -104,16 +120,17 @@ export function parseInvoice(raw) {
   const feeLabel = /(?:protect promise|handling|platform|convenience|shipping) fee/i;
   const tableItem = text.split('\n').find(line => feeLabel.test(line) && /\d[.,]\d{2}/.test(line));
   const rowProduct = tableRows.map(row => row[1].trim()).join(' / ') || amazon.map(item => item.description).join(' / ');
-  const multipleProducts = tableRows.length > 1 || amazon.length > 1;
-  const product = findText(text, String.raw`(?:Product|Item)(?:[ \t]+(?:Name|Description))?[ \t]*(?=[:#])|Description[ \t]*(?=[:#])`, '([^\\n]+)') || rowProduct || tableItem?.match(feeLabel)?.[0] || '';
-  const quantity = multipleProducts ? null : findAmount(text, String.raw`Quantity|Qty\.?`) ?? totalRow?.[0] ?? (tableRows.length === 1 ? value(tableRows[0][2]) : null) ?? amazon[0]?.quantity ?? null;
+  const multipleProducts = service?.multiple || tableRows.length > 1 || amazon.length > 1;
+  const product = findText(text, String.raw`(?:Product|Item)(?:[ \t]+(?:Name|Description))?[ \t]*(?=[:#])|Description[ \t]*(?=[:#])`, '([^\\n]+)') || service?.description || rowProduct || tableItem?.match(feeLabel)?.[0] || '';
+  const quantity = multipleProducts ? null : findAmount(text, String.raw`Quantity|Qty\.?`) ?? service?.quantity ?? totalRow?.[0] ?? (tableRows.length === 1 ? value(tableRows[0][2]) : null) ?? amazon[0]?.quantity ?? null;
   const unitPrice = multipleProducts ? null : findAmount(text, String.raw`Unit[ \t]+(?:Price|Rate)|Price[ \t]+per[ \t]+unit|Rate`)
+    ?? (service && quantity > 0 ? cents(service.gross / quantity) / 100 : null)
     ?? (tableRows.length === 1 && quantity > 0 ? Math.round(value(tableRows[0][3]) * 100 / quantity) / 100 : null)
     ?? (totalRow?.[0] > 0 ? Math.round(totalRow[1] * 100 / totalRow[0]) / 100 : null) ?? amazon[0]?.price ?? null;
-  const base = taxable ?? totalRow?.[3] ?? (amount != null && gst != null ? amount - gst : null);
+  const base = taxable ?? service?.taxable ?? totalRow?.[3] ?? (amount != null && gst != null ? amount - gst : null);
   const gstRate = base > 0 && gst != null
     ? [0, 3, 5, 12, 18, 28, 40].find(rate => Math.abs(cents(base * rate / 100) - cents(gst)) <= 2) ?? null : null;
-  const kind = (!multipleProducts && feeLabel.test(product)) || (!product && feeLabel.test(text) && !/\b(?:HSN|SKU|ASIN|FSN)\s*[:#-]?\s*\w{4,}/i.test(text)) ? 'Fee' : 'Product';
+  const kind = (!multipleProducts && (feeLabel.test(product) || (service && /^(?:delivery|shipping) charges?$/i.test(product)))) || (!product && feeLabel.test(text) && !/\b(?:HSN|SKU|ASIN|FSN)\s*[:#-]?\s*\w{4,}/i.test(text)) ? 'Fee' : 'Product';
   return {reference, orderId, supplier, gstin, platform, product, quantity, unitPrice, gstRate,
     amount, kind, gst, discount: discount == null ? null : Math.abs(discount),
     productDiscount: amazonTable?.products.length === 1 ? amazonTable.products[0].discount : null,
