@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {mergeInvoiceReads,missingInvoiceFields} from '../src/invoiceExtraction.js';
 import {parseInvoice} from '../src/invoiceParser.js';
 import {purchaseDetails, purchaseTotals, verifyInvoice} from '../src/purchaseReconciliation.js';
 
@@ -197,4 +198,13 @@ test('reads an offline material invoice with litre units and a negative rounding
     product:'Printing Ink Dti (4 color)',quantity:0.8,quantityUnit:'LTR',unitPrice:2225,
     gst:320.4,gstRate:18,amount:2100,roundOff:-0.4,kind:'Product',platform:'Direct',reviewRequired:true,
   });
+});
+
+test('combines compatible OCR fields and leaves conflicting amounts for manual review', () => {
+  const primary={reference:'VA-123',amount:500,supplier:'Example Supplier',gst:null};
+  assert.deepEqual(missingInvoiceFields(primary),['GST']);
+  assert.equal(mergeInvoiceReads(primary,{reference:'va-123',amount:500,gst:0}).gst,0);
+  assert.equal(mergeInvoiceReads(primary,{reference:'va-123',amount:508,gst:8}).gst,null);
+  assert.equal(mergeInvoiceReads(primary,{reference:'va-123',amount:null,gst:8}).gst,null);
+  assert.equal(mergeInvoiceReads({kind:'Product'},{kind:'Fee',reference:'F-123',amount:500,gst:8}).kind,'Fee');
 });

@@ -1,3 +1,4 @@
+import {mergeInvoiceReads,missingInvoiceFields} from './invoiceExtraction.js';
 import {parseInvoice} from './invoiceParser.js';
 export {parseInvoice};
 
@@ -41,52 +42,87 @@ function sellerColumnText(items) {
   }));
 }
 
+function withTimeout(promise, milliseconds) {
+  let timer;
+  return Promise.race([promise,new Promise((_,reject)=>{
+    timer=setTimeout(()=>reject(Error('Automatic reading timed out.')),milliseconds);
+  })]).finally(()=>clearTimeout(timer));
+}
+
+async function renderForOcr(page, recognize) {
+  const base = page.getViewport({scale:1});
+  const viewport = page.getViewport({scale:Math.min(2.5,2400/Math.max(base.width,base.height))});
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  try {
+    await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+    return await recognize(canvas);
+  } finally {
+    canvas.width = canvas.height = 0;
+  }
+}
+
 export async function readInvoice(file) {
   const type = invoiceFileType(file);
-  let workerPromise;
+  let workerPromise, ocrError;
   async function recognize(image) {
-    workerPromise ??= import('./invoiceOcr.js').then(module => module.createInvoiceOcr());
-    const worker = await workerPromise;
-    return (await worker.recognize(image)).data.text;
+    if (ocrError) throw ocrError;
+    try {
+      workerPromise ??= import('./invoiceOcr.js').then(module=>module.createInvoiceOcr());
+      const worker = await withTimeout(workerPromise,15000);
+      return (await withTimeout(worker.recognize(image),20000)).data.text;
+    } catch (error) {
+      ocrError = error;
+      throw error;
+    }
   }
   try {
-    if (type !== 'application/pdf') return parseInvoice(await recognize(file));
-    const [{getDocument, GlobalWorkerOptions}, {default: workerUrl}] = await Promise.all([
-      import('pdfjs-dist'), import('pdfjs-dist/build/pdf.worker.min.mjs?url')
+    if (type!=='application/pdf') return parseInvoice(await recognize(file));
+    const [{getDocument,GlobalWorkerOptions},{default:workerUrl}] = await Promise.all([
+      import('pdfjs-dist'),import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
     ]);
     GlobalWorkerOptions.workerSrc = workerUrl;
-    const task = getDocument({data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false});
+    const task = getDocument({data:new Uint8Array(await file.arrayBuffer()),isEvalSupported:false});
     try {
       const doc = await task.promise;
-      if (doc.numPages > MAX_PAGES) throw Error('Automatic reading supports invoices up to 20 pages.');
-      const pages = [];
-      let sellerColumn = '';
-      for (let index = 1; index <= doc.numPages; index++) {
-        const page = await doc.getPage(index);
-        const {items} = await page.getTextContent();
+      if (doc.numPages>MAX_PAGES) throw Error('Automatic reading supports invoices up to 20 pages.');
+      const pages=[];
+      let sellerColumn='';
+      for (let index=1; index<=doc.numPages; index++) {
+        const page=await doc.getPage(index);
+        let items=[];
+        try { ({items}=await page.getTextContent()); } catch { /* The page may still render for OCR. */ }
+        const content=pdfText(items);
         sellerColumn ||= sellerColumnText(items);
-        const content = pdfText(items);
-        if ((content.match(/[A-Za-z0-9]/g)?.length ?? 0) >= 50) {
-          pages.push(content);
-          continue;
-        }
-        const base = page.getViewport({scale: 1});
-        const viewport = page.getViewport({scale: Math.min(2.5, 2400 / Math.max(base.width, base.height))});
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
+        pages.push({page,content,scanned:(content.match(/[A-Za-z0-9]/g)?.length??0)<50});
+      }
+      const parse=()=>parseInvoice(pages.map(page=>page.ocr||page.content).join('\n'),sellerColumn);
+      let extracted=parse();
+      if (extracted.documentType==='quotation') return extracted;
+      async function tryPage(entry) {
+        if (ocrError) return;
         try {
-          await page.render({canvasContext: canvas.getContext('2d'), viewport}).promise;
-          pages.push(await recognize(canvas));
-        } finally {
-          canvas.width = canvas.height = 0;
+          entry.ocr=await renderForOcr(entry.page,recognize);
+        } catch { /* Keep any fields already extracted and allow manual entry. */ }
+      }
+      for (const page of pages.filter(entry=>entry.scanned)) await tryPage(page);
+      extracted=mergeInvoiceReads(extracted,parse());
+      if (extracted.documentType!=='quotation'&&missingInvoiceFields(extracted).length&&!ocrError) {
+        // Headings and totals usually appear on the first or last pages of a digital PDF.
+        const candidates = [...new Set([pages[0],pages.at(-1),pages[1]].filter(entry=>entry&&!entry.scanned))];
+        for (const page of candidates) {
+          await tryPage(page);
+          extracted=mergeInvoiceReads(extracted,parse());
+          if (extracted.documentType==='quotation'||!missingInvoiceFields(extracted).length) break;
         }
       }
-      return parseInvoice(pages.join('\n'), sellerColumn);
+      return extracted;
     } finally {
       await task.destroy();
     }
   } finally {
-    if (workerPromise) await workerPromise.then(worker => worker.terminate(), () => {});
+    // A pending worker can resolve after the timeout. Terminate it then as well.
+    workerPromise?.then(worker=>worker.terminate()).catch(()=>{});
   }
 }
