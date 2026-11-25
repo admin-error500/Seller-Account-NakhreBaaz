@@ -38,7 +38,6 @@
 .platform-sales dd{margin:0;font-weight:650}
 @media(max-width:850px){.purchase-nav summary{padding:9px}.purchase-nav>div{margin-left:0}}
 
-.purchase-row-actions{flex-wrap:wrap;max-width:220px;margin-left:auto}
 .row-actions .invoice-action{position:relative;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0}
 .invoice-action-tooltip{position:absolute;right:0;bottom:calc(100% + 4px);background:#101d32;color:#fff;border-radius:6px;padding:5px 8px;pointer-events:none;visibility:hidden;font-size:11px;white-space:nowrap}
 .invoice-action:is(:hover,:focus-visible) .invoice-action-tooltip{visibility:visible}
@@ -54,3 +53,22 @@
 .entry-details-grid dd{margin:5px 0 0;overflow-wrap:anywhere}
 .entry-invoices{list-style:none;padding:0;display:grid;gap:8px}
 .entry-invoices li{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+
+.entry-table-toolbar{min-height:44px;margin:0 0 18px;flex-wrap:wrap;align-items:center}
+.entry-table-toolbar h2{margin:0}
+.entry-export{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.entry-export button{min-height:40px;white-space:nowrap}
+.entry-export button:disabled{opacity:.55;cursor:default}
+.record-table th,.record-table td{vertical-align:middle}
+.record-table td{line-height:1.45}
+.record-table .entry-number{text-align:right;font-variant-numeric:tabular-nums}
+.record-table .actions-head,.record-table .actions-cell{min-width:0;width:1%;text-align:center}
+.record-table .row-actions{justify-content:center;flex-wrap:nowrap}
+.record-table .invoice-action{flex:none}
+.record-table .entry-select{position:sticky;left:0;z-index:1;width:1%;min-width:54px;text-align:center;background:#fff}
+.record-table th.entry-select{background:#f4f7fb;z-index:2}
+.record-table .entry-select input{width:16px;height:16px;padding:0;margin:0;vertical-align:middle;accent-color:#19304e;cursor:pointer}
+.record-table .entry-selected td{background:#eef6ff}
+.record-table .invoice-cell>div{overflow-wrap:anywhere;white-space:normal;min-width:160px}
+.entry-add-toolbar>button{min-height:40px;padding-block:8px}
+.record-table td.entry-text{min-width:125px;max-width:220px;white-space:normal;overflow-wrap:anywhere}

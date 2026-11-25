@@ -1,3 +1,4 @@
+import {useRowSelection,RowCheckbox,SelectedExport} from './selectedExport.jsx';
 import EntryDetails from './EntryDetails.jsx';
 import React,{useRef,useState} from 'react';
 import {parseMoney, normalizeInvoiceKey} from './purchaseReconciliation.js';
@@ -9,6 +10,7 @@ export default function SupplierAdvances({balances, today, rupees, onSaved}) {
   const [message,setMessage] = useState('');
   const draft = useRef();
   const [selectedEntryId,setSelectedEntryId]=useState(null);
+  const selection=useRowSelection(balances);
   const selectedEntry=balances.find(row=>row.id===selectedEntryId);
   async function submit(event) {
     event.preventDefault();
@@ -46,16 +48,20 @@ export default function SupplierAdvances({balances, today, rupees, onSaved}) {
       {message&&<p role="status">{message}</p>}
     </form>
     <section>
-      <h2>Unused supplier advances · {rupees(balances.reduce((sum,row)=>sum+row.remaining,0))}</h2>
-      <div className="tablewrap"><table><thead><tr>
-        {['Supplier','Payment date','Reference','Advance paid','Available','Actions'].map(label=><th key={label}>{label}</th>)}
+      <div className="toolbar entry-table-toolbar">
+        <h2>Unused supplier advances · {rupees(balances.reduce((sum,row)=>sum+row.remaining,0))}</h2>
+        <SelectedExport selection={selection} name="supplier-advances"/>
+      </div>
+      <div className="tablewrap"><table className="record-table"><thead><tr><th className="entry-select">Select</th>
+        {['Supplier','Payment date','Reference','Advance paid','Available','Actions'].map(label=><th key={label} className={['Advance paid','Available'].includes(label)?'entry-number':undefined}>{label}</th>)}
       </tr></thead><tbody>
-        {[...balances].reverse().map(row=><tr key={row.id}>
+        {[...balances].reverse().map(row=><tr key={row.id} className={selection.ids.has(row.id)?'entry-selected':undefined}>
+          <RowCheckbox row={row} selection={selection} label={`${row.supplier} advance ${row.date}`}/>
           <td>{row.supplier}</td><td>{row.date}</td><td>{row.reference||'—'}</td>
-          <td>{rupees(row.amount)}</td><td>{rupees(row.remaining)}</td>
+          <td className="entry-number">{rupees(row.amount)}</td><td className="entry-number">{rupees(row.remaining)}</td>
           <td><button type="button" className="compact-button" onClick={()=>setSelectedEntryId(row.id)}>Open entry</button></td>
         </tr>)}
-        {!balances.length&&<tr><td colSpan={6}>No advances recorded.</td></tr>}
+        {!balances.length&&<tr><td colSpan={7}>No advances recorded.</td></tr>}
       </tbody></table></div>
     </section>
     {selectedEntry&&<EntryDetails title="Supplier advance entry" onClose={()=>setSelectedEntryId(null)} fields={[
