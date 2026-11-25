@@ -57,10 +57,10 @@ async function openPurchasePage(page, name) {
   await button.click();
 }
 
-async function useSellerApi(page, equipmentPurchases = []) {
+async function useSellerApi(page, equipmentPurchases = [], sellerRole = 'admin') {
   const db = {products:[{id:sku,sku:'PLAIN-M',name:'Plain T-Shirt',size:'M',color:'Black',type:'BLANK'}],purchases:[],material_purchases:[],equipment_purchases:equipmentPurchases,supplier_advances:[],supplier_advance_allocations:[]};
   const uploads = [];
-  const user = {id:seller,email:'seller@example.test',app_metadata:{seller_role:'admin'},user_metadata:{}};
+  const user = {id:seller,email:'seller@example.test',app_metadata:{seller_role:sellerRole},user_metadata:{}};
   const session = {access_token:'browser-test',refresh_token:'browser-test',
     expires_at:Math.floor(Date.now()/1000)+3600, token_type:'bearer',user};
   await page.addInitScript(session => localStorage.setItem('sb-seller-test-auth-token',JSON.stringify(session)),session);
@@ -73,7 +73,7 @@ async function useSellerApi(page, equipmentPurchases = []) {
     if (url.pathname.startsWith('/auth/')) return result(user);
     if (url.pathname.startsWith('/storage/')) {
       uploads.push(request.method());
-      return result({Key:table});
+      return result(url.pathname.includes('/object/sign/')?{signedURL:'/object/sign/purchase-invoices/test.pdf?token=test'}:{Key:table});
     }
     if (request.method()==='GET') return result(list);
     const payload = request.postDataJSON();
@@ -431,6 +431,11 @@ test('records and applies an advance once, separating invoice verification from 
   await expect(page.getByRole('row').filter({hasText:'Equipment purchase payments'})).toContainText('₹0.00');
   await page.getByRole('button',{name:'Supplier Advances',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Unused supplier advances · ₹0.00'})).toBeVisible();
+  await page.getByRole('button',{name:'Open entry',exact:true}).click();
+  const detail = page.getByRole('dialog',{name:'Supplier advance entry'});
+  await expect(detail.getByText('Advance applied',{exact:true}).locator('..')).toContainText('₹4,000.00');
+  await detail.getByRole('button',{name:'Close',exact:true}).click();
+  await expect(detail).toBeHidden();
 });
 
 test('explains a supplier quotation without applying it to the purchase', async ({page}) => {
@@ -485,4 +490,33 @@ test('reads and saves an offline ink invoice in the inventory unit', async ({pag
   await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
   expect(db.material_purchases[0]).toMatchObject({qty:800,rate:2.225,actual_payment:2100,
     invoice_details:[{quantity:0.8,quantityUnit:'LTR',unitPrice:2225,gst:320.4,amount:2100}]});
+});
+
+test('opens one saved purchase with its own amounts and attachment for a non-admin seller', async ({page}) => {
+  const invoice = {kind:'Product',reference:'A-1',supplier:'Acme',verified:true,amount:500,gst:76.27,path:'test/entry.pdf'};
+  await useSellerApi(page,[
+    {id:'1',name:'Printer one',supplier:'Acme',invoice:'A-1',qty:1,rate:500,actual_payment:500,invoice_details:[invoice]},
+    {id:'2',name:'Printer two',supplier:'Other Co',qty:2,rate:800,actual_payment:1600,invoice_details:[]},
+  ],'seller');
+  await openPurchasePage(page,'Machines & Equipment');
+  const first = page.getByRole('row').filter({has:page.getByRole('cell',{name:'Printer one',exact:true})});
+  const open = first.getByRole('button',{name:'Open entry',exact:true});
+  await open.click();
+  const dialog = page.getByRole('dialog',{name:'Machines & Equipment entry'});
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText('Printer one',{exact:true})).toBeVisible();
+  await expect(dialog.getByText('Printer two',{exact:true})).toHaveCount(0);
+  await expect(dialog.getByText('Actual payment',{exact:true}).locator('..')).toContainText('₹500.00');
+  const signed = page.waitForRequest(request=>request.url().includes('/object/sign/purchase-invoices/test/entry.pdf'));
+  await dialog.getByRole('button',{name:'View invoice A-1',exact:true}).click();
+  await signed;
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(open).toBeFocused();
+  await page.getByRole('row').filter({has:page.getByRole('cell',{name:'Printer two',exact:true})})
+    .getByRole('button',{name:'Open entry',exact:true}).click();
+  await expect(dialog.getByText('Printer two',{exact:true})).toBeVisible();
+  await expect(dialog.getByText('No invoices saved.',{exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'Close',exact:true}).click();
+  await expect(dialog).toBeHidden();
 });

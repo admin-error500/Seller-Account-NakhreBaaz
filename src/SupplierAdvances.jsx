@@ -1,3 +1,4 @@
+import EntryDetails from './EntryDetails.jsx';
 import React,{useRef,useState} from 'react';
 import {parseMoney, normalizeInvoiceKey} from './purchaseReconciliation.js';
 import {saveAdvanceEntry} from './supabase.js';
@@ -7,6 +8,8 @@ export default function SupplierAdvances({balances, today, rupees, onSaved}) {
   const [saving,setSaving] = useState(false);
   const [message,setMessage] = useState('');
   const draft = useRef();
+  const [selectedEntryId,setSelectedEntryId]=useState(null);
+  const selectedEntry=balances.find(row=>row.id===selectedEntryId);
   async function submit(event) {
     event.preventDefault();
     if (saving) return;
@@ -45,15 +48,21 @@ export default function SupplierAdvances({balances, today, rupees, onSaved}) {
     <section>
       <h2>Unused supplier advances · {rupees(balances.reduce((sum,row)=>sum+row.remaining,0))}</h2>
       <div className="tablewrap"><table><thead><tr>
-        {['Supplier','Payment date','Reference','Advance paid','Available'].map(label=><th key={label}>{label}</th>)}
+        {['Supplier','Payment date','Reference','Advance paid','Available','Actions'].map(label=><th key={label}>{label}</th>)}
       </tr></thead><tbody>
         {[...balances].reverse().map(row=><tr key={row.id}>
           <td>{row.supplier}</td><td>{row.date}</td><td>{row.reference||'—'}</td>
           <td>{rupees(row.amount)}</td><td>{rupees(row.remaining)}</td>
+          <td><button type="button" className="compact-button" onClick={()=>setSelectedEntryId(row.id)}>Open entry</button></td>
         </tr>)}
-        {!balances.length&&<tr><td colSpan={5}>No advances recorded.</td></tr>}
+        {!balances.length&&<tr><td colSpan={6}>No advances recorded.</td></tr>}
       </tbody></table></div>
     </section>
+    {selectedEntry&&<EntryDetails title="Supplier advance entry" onClose={()=>setSelectedEntryId(null)} fields={[
+      ['Supplier',selectedEntry.supplier],['Payment date',selectedEntry.date],['Reference',selectedEntry.reference||'—'],
+      ['Advance paid',rupees(selectedEntry.amount)],['Advance applied',rupees(Number(selectedEntry.amount)-selectedEntry.remaining)],
+      ['Available',rupees(selectedEntry.remaining)],
+    ]}/>}
   </>;
 }
 
