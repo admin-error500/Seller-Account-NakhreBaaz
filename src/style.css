@@ -83,3 +83,7 @@
 .record-table .invoice-cell>div{overflow-wrap:anywhere;white-space:normal;min-width:160px}
 .entry-add-toolbar>button{min-height:40px;padding-block:8px}
 .record-table td.entry-text{min-width:125px;max-width:220px;white-space:normal;overflow-wrap:anywhere}
+
+.record-table .entry-name{display:inline;padding:0;border:0;background:transparent;color:#183d70;font:inherit;font-weight:600;text-align:left;white-space:normal;overflow-wrap:anywhere;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.record-table .entry-name:hover{color:#0e274b}
+.record-table .entry-name:focus-visible{outline:2px solid #376aa0;outline-offset:3px;border-radius:2px}

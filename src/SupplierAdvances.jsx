@@ -53,15 +53,15 @@ export default function SupplierAdvances({balances, today, rupees, onSaved}) {
         <SelectedExport selection={selection} name="supplier-advances"/>
       </div>
       <div className="tablewrap"><table className="record-table"><thead><tr><th className="entry-select">Select</th>
-        {['Supplier','Payment date','Reference','Advance paid','Available','Actions'].map(label=><th key={label} className={['Advance paid','Available'].includes(label)?'entry-number':undefined}>{label}</th>)}
+        {['Supplier','Payment date','Reference','Advance paid','Available'].map(label=><th key={label} className={['Advance paid','Available'].includes(label)?'entry-number':undefined}>{label}</th>)}
       </tr></thead><tbody>
         {[...balances].reverse().map(row=><tr key={row.id} className={selection.ids.has(row.id)?'entry-selected':undefined}>
           <RowCheckbox row={row} selection={selection} label={`${row.supplier} advance ${row.date}`}/>
-          <td>{row.supplier}</td><td>{row.date}</td><td>{row.reference||'—'}</td>
+          <td className="entry-text"><button type="button" className="entry-name" aria-haspopup="dialog"
+            onClick={()=>setSelectedEntryId(row.id)}>{row.supplier}</button></td><td>{row.date}</td><td>{row.reference||'—'}</td>
           <td className="entry-number">{rupees(row.amount)}</td><td className="entry-number">{rupees(row.remaining)}</td>
-          <td><button type="button" className="compact-button" onClick={()=>setSelectedEntryId(row.id)}>Open entry</button></td>
         </tr>)}
-        {!balances.length&&<tr><td colSpan={7}>No advances recorded.</td></tr>}
+        {!balances.length&&<tr><td colSpan={6}>No advances recorded.</td></tr>}
       </tbody></table></div>
     </section>
     {selectedEntry&&<EntryDetails title="Supplier advance entry" onClose={()=>setSelectedEntryId(null)} fields={[

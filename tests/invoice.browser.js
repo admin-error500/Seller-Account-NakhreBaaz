@@ -432,7 +432,7 @@ test('records and applies an advance once, separating invoice verification from 
   await expect(page.getByRole('row').filter({hasText:'Equipment purchase payments'})).toContainText('₹0.00');
   await page.getByRole('button',{name:'Supplier Advances',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Unused supplier advances · ₹0.00'})).toBeVisible();
-  await page.getByRole('button',{name:'Open entry',exact:true}).click();
+  await page.getByRole('button',{name:'Acme',exact:true}).click();
   const detail = page.getByRole('dialog',{name:'Supplier advance entry'});
   await expect(detail.getByText('Advance applied',{exact:true}).locator('..')).toContainText('₹4,000.00');
   await detail.getByRole('button',{name:'Close',exact:true}).click();
@@ -501,7 +501,9 @@ test('opens one saved purchase with its own amounts and attachment for a non-adm
   ],'seller');
   await openPurchasePage(page,'Machines & Equipment');
   const first = page.getByRole('row').filter({has:page.getByRole('cell',{name:'Printer one',exact:true})});
-  const open = first.getByRole('button',{name:'Open entry',exact:true});
+  await expect(page.getByRole('button',{name:'Open entry',exact:true})).toHaveCount(0);
+  const open = first.getByRole('button',{name:'Printer one',exact:true});
+  await expect(open).toHaveAttribute('aria-haspopup','dialog');
   await open.click();
   const dialog = page.getByRole('dialog',{name:'Machines & Equipment entry'});
   await expect(dialog).toBeVisible();
@@ -515,7 +517,7 @@ test('opens one saved purchase with its own amounts and attachment for a non-adm
   await expect(dialog).toBeHidden();
   await expect(open).toBeFocused();
   await page.getByRole('row').filter({has:page.getByRole('cell',{name:'Printer two',exact:true})})
-    .getByRole('button',{name:'Open entry',exact:true}).click();
+    .getByRole('button',{name:'Printer two',exact:true}).click();
   await expect(dialog.getByText('Printer two',{exact:true})).toBeVisible();
   await expect(dialog.getByText('No invoices saved.',{exact:true})).toBeVisible();
   await dialog.getByRole('button',{name:'Close',exact:true}).click();
@@ -541,7 +543,7 @@ test('exports only checked rows with durable invoice links and keeps the actions
     const {y,width,height}=button.getBoundingClientRect();
     return [y,width,height];
   }));
-  expect(geometry).toHaveLength(4);
+  expect(geometry).toHaveLength(3);
   expect(new Set(geometry.map(values=>values.join(','))).size).toBe(1);
 
   const downloading=page.waitForEvent('download');
@@ -572,7 +574,7 @@ test('aligns invoice view buttons and keeps the details header visible while scr
     ],
   }]);
   await openPurchasePage(page,'Machines & Equipment');
-  await page.getByRole('button',{name:'Open entry',exact:true}).click();
+  await page.getByRole('button',{name:'Printer',exact:true}).click();
   const dialog = page.getByRole('dialog',{name:'Machines & Equipment entry'});
   const views = dialog.getByRole('button',{name:/^View invoice/});
   await expect(views).toHaveCount(3);

@@ -9,7 +9,7 @@ import {purchasePages, purchaseDetails, purchaseTotals, parseMoney, taxDetails, 
 import {prepareInvoices, uploadInvoices, discardInvoiceUploads, invoiceSaveError, isDefinitiveWriteError} from './purchaseInvoiceStorage.js';
 import React,{useState,useMemo,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
-import {Eye, FilePlus, FileCheck, Upload, Pencil, Wallet, FileText, Trash2, Boxes} from 'lucide-react';
+import {Eye, FilePlus, FileCheck, Upload, Pencil, Wallet, Trash2, Boxes} from 'lucide-react';
 import './style.css';
 import {supabase,configured,fetchAll,insertEntry,updateProduct,deleteEntry,updatePurchaseInvoices,fromRow,findPurchase,insertPurchase} from './supabase';
 const sizes=['14','16','18','20','22','24','26','28','30','32','34','36','38','40','42','44','46','48','S','M','L','XL','XXL','3XL'];
@@ -361,9 +361,19 @@ const entryColumnClass=key=>{
   if (fields[key]==='number'||key==='gstRate') return 'entry-number';
   if (['name','supplier','description','productId','blankId','printedId'].includes(key)) return 'entry-text';
 };
-const entryColumnCount=visibleFields.length+2+Number(page==='materialPurchases')+
+const hasEntryActions=isPurchase||isAdmin||page==='products';
+const primaryEntryField=({products:'name',sales:'orderId',expenses:'description',settlements:'reference',
+  materialPurchases:'materialId'})[page]??visibleFields[0];
+const entryColumnCount=visibleFields.length+1+Number(hasEntryActions)+Number(page==='materialPurchases')+
   Number(['products','materials'].includes(page))+(isPurchase?5:0)+(page==='sales'?2:0);
 const openEntry=row=>{setEntryError('');setOpenEntryId(row.id)};
+function entryCell(row,key) {
+  const value=display(row,key);
+  if (key!==primaryEntryField) return value;
+  return <button type="button" className="entry-name" aria-haspopup="dialog" onClick={()=>openEntry(row)}>
+    {value==='—'||value===''?'Entry details':value}
+  </button>;
+}
 function entryFields(row) {
   const pairs=visibleFields.map(key=>[purchaseFieldLabel(key),key==='gstInclusive'
     ? row[key]==null?'—':row[key]===true||row[key]==='Yes'?'Yes':'No'
@@ -479,12 +489,12 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
       {isPurchase&&<><th>Invoices / Order</th><th className="entry-number">Actual payment</th>
         <th className="entry-number">Received invoice total</th><th className="entry-number">Documented GST</th><th>Reconciliation</th></>}
       {page==='sales'&&<><th className="entry-number">GST Amount</th><th className="entry-number">Total Incl. GST</th></>}
-      <th className="actions-head">Actions</th>
+      {hasEntryActions&&<th className="actions-head">Actions</th>}
     </tr></thead>
     <tbody>{[...entryRows].reverse().map(row=><tr key={row.id} className={selection.ids.has(row.id)?'entry-selected':undefined}>
       <RowCheckbox row={row} selection={selection} label={row.name||row.sku||row.invoice||row.orderId||row.supplier||row.description||row.id}/>
-      {visibleFields.map(key=><td key={key} className={entryColumnClass(key)}>{display(row,key)}</td>)}
-      {page==='materialPurchases'&&<td>{display(row,'materialId')}</td>}
+      {visibleFields.map(key=><td key={key} className={entryColumnClass(key)}>{entryCell(row,key)}</td>)}
+      {page==='materialPurchases'&&<td className="entry-text">{entryCell(row,'materialId')}</td>}
       {page==='products'&&<td className="entry-number">{number(stock[row.id])}</td>}
       {page==='materials'&&<td className="entry-number">{number(materialStock[row.id])}</td>}
       {isPurchase&&<>
@@ -497,8 +507,7 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
       </>}
       {page==='sales'&&<><td className="entry-number">{rupees(taxDetails(row.qty,row.price,row.gstRate,row.gstInclusive).tax)}</td>
         <td className="entry-number">{rupees(taxDetails(row.qty,row.price,row.gstRate,row.gstInclusive).total)}</td></>}
-      <td className="actions-cell"><div className="row-actions">
-        <InvoiceAction icon={FileText} label="Open entry" onClick={()=>openEntry(row)}/>
+      {hasEntryActions&&<td className="actions-cell"><div className="row-actions">
         {isPurchase&&<PurchaseInvoiceActions row={row} saving={saving} viewInvoice={viewInvoice}
           openAttachment={openAttachment} openAdvance={openAdvance} openEntry={()=>openEntry(row)}/>}
         {page==='products'&&<>
@@ -506,7 +515,7 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
           <InvoiceAction icon={Boxes} label="Adjust Stock" onClick={()=>{setAdjustingProduct(row);setAdjustQty(String(number(stock[row.id])))}}/>
         </>}
         {isAdmin&&<InvoiceAction icon={Trash2} label="Delete" disabled={saving} danger onClick={()=>removeRecord(page,row)}/>}
-      </div></td>
+      </div></td>}
     </tr>)}
     {!entryRows.length&&<tr><td className="empty-state" colSpan={entryColumnCount}>No records yet. Add your first entry to get started.</td></tr>}
     </tbody>
