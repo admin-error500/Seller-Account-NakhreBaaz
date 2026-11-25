@@ -453,3 +453,36 @@ test('explains a supplier quotation without applying it to the purchase', async 
   expect(db.material_purchases).toHaveLength(0);
   expect(uploads).toEqual([]);
 });
+
+test('reads and saves an offline ink invoice in the inventory unit', async ({page}) => {
+  const {db} = await useSellerApi(page);
+  await openPurchasePage(page,'Material Purchases');
+  await page.getByRole('button',{name:'+ Add Entry'}).click();
+  await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+  const file = process.env.SELLER_TEST_OFFLINE_PDF ??
+    {name:'offline.pdf',mimeType:'application/pdf',buffer:makePdf([
+      'TAX INVOICE ORIGINAL FOR RECIPIENT','Example Enterprises','GSTIN: 27ABCDE1234F1Z5',
+      'Invoice No. Invoice Date','VE/26-27/0917 25/11/2026',
+      'S.NO. ITEMS HSN QTY. RATE AMOUNT','1 Printing Ink 32151990 0.8 LTR 2,225 1,780',
+      'CGST @9% - - - Rs. 160.2','SGST @9% - - - Rs. 160.2','Round Off - - - - Rs. 0.4',
+      'TOTAL 0.8 Rs. 2,100',
+    ])};
+  await page.getByLabel('Invoice file').setInputFiles(file);
+  await expect(page.getByLabel('Invoice supplier',{exact:true})).toHaveValue(process.env.SELLER_TEST_OFFLINE_PDF
+    ? 'VIHAAN ENTERPRISES':'Example Enterprises');
+  await expect(page.getByLabel('Invoice number',{exact:true})).toHaveValue('VE/26-27/0917');
+  await expect(page.getByLabel('Invoice quantity',{exact:true})).toHaveValue('0.8');
+  await expect(page.getByLabel('Invoice quantity unit',{exact:true})).toHaveValue('LTR');
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('2100');
+  await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('320.4');
+  await expect(page.getByLabel('Quantity',{exact:true})).toHaveValue('800');
+  await expect(page.getByRole('combobox',{name:'Unit',exact:true})).toHaveValue('ml');
+  await expect(page.getByRole('combobox',{name:'Category',exact:true})).toHaveValue('Ink');
+  await expect(page.getByLabel('Item unit price before discount (₹)',{exact:true})).toHaveValue('2.225');
+  await page.getByLabel('Actual payment (₹)').fill('2100');
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save Entry'}).click();
+  await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
+  expect(db.material_purchases[0]).toMatchObject({qty:800,rate:2.225,actual_payment:2100,
+    invoice_details:[{quantity:0.8,quantityUnit:'LTR',unitPrice:2225,gst:320.4,amount:2100}]});
+});

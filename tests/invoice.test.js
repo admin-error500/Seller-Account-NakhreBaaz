@@ -183,3 +183,18 @@ test('identifies a quotation and reads its quoted total without treating sales t
   assert.deepEqual(quotation,{documentType:'quotation',reference:'QT/26-27/123',amount:2100});
   assert.throws(()=>verifyInvoice({...quotation,quotation:true}),/final tax invoice/);
 });
+
+test('reads an offline material invoice with litre units and a negative rounding adjustment', () => {
+  const text = [
+    'TAX INVOICE ORIGINAL FOR RECIPIENT', 'Example Enterprises', 'GSTIN: 27ABCDE1234F1Z5',
+    'Invoice No. Invoice Date', 'VE/26-27/0917 25/11/2026',
+    'S.NO. ITEMS HSN QTY. RATE AMOUNT', '1 Printing Ink Dti (4 color) 32151990 0.8 LTR 2,225 1,780',
+    'CGST @9% - - - ₹ 160.2', 'SGST @9% - - - ₹ 160.2', 'Round Off - - - - ₹ 0.4',
+    'TOTAL 0.8 ₹ 2,100', 'Total 1,780 160.2 160.2 ₹ 320.4',
+  ].join('\n');
+  assert.deepEqual(parseInvoice(text),{
+    reference:'VE/26-27/0917',supplier:'Example Enterprises',gstin:'27ABCDE1234F1Z5',
+    product:'Printing Ink Dti (4 color)',quantity:0.8,quantityUnit:'LTR',unitPrice:2225,
+    gst:320.4,gstRate:18,amount:2100,roundOff:-0.4,kind:'Product',platform:'Direct',reviewRequired:true,
+  });
+});

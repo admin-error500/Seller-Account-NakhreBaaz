@@ -88,8 +88,39 @@ function invoiceSupplier(text, sellerColumn) {
   return suffix ? `${name} ${suffix}` : name;
 }
 
+function offlineTaxInvoice(text) {
+  const lines = text.split('\n');
+  const header = lines.findIndex(line=>/^\s*Tax Invoice(?:[ \t]+Original For Recipient)?\s*$/i.test(line));
+  if (header < 0 || header > 7 || !/^.*\bITEMS[ \t]+HSN[ \t]+QTY\.?[ \t]+RATE[ \t]+AMOUNT\s*$/im.test(text)) return null;
+  const numberHeader = lines.findIndex(line=>/\bInvoice[ \t]+No\.?[ \t]+Invoice[ \t]+Date\b/i.test(line));
+  const reference = numberHeader < 0 ? '' : lines.slice(numberHeader+1,numberHeader+6)
+    .map(line=>line.match(/(?:^|[ \t])([A-Z0-9][A-Z0-9./_-]*\d)[ \t]+\d{1,2}[./-]\d{1,2}[./-]\d{4}\b/i)?.[1]).find(Boolean);
+  const row = new RegExp(String.raw`^[ \t]*\d+[ \t]+(.+?)[ \t]+\d{4,8}[ \t]+(\d+(?:\.\d+)?)[ \t]+([A-Z]+)[ \t]+${currency}(${numeric})[ \t]+${currency}(${numeric})[ \t]*$`, 'gim');
+  const items = [...text.matchAll(row)];
+  if (items.length !== 1 || !reference) return null;
+  const [, product, qty, unit, rate, base] = items[0];
+  const quantity = value(qty), unitPrice = value(rate), taxable = value(base);
+  if (quantity <= 0 || unitPrice < 0 || cents(quantity*unitPrice) !== cents(taxable)) return null;
+
+  const amount = value(text.match(new RegExp(String.raw`^Total[ \t]+\d+(?:\.\d+)?[ \t]+(?:₹|INR|Rs\.?)[ \t]*(${numeric})[ \t]*$`, 'im'))?.[1]);
+  const rounding = text.match(new RegExp(String.raw`^Round[ \t]+Off[ \t]+(?:(?:-[ \t]+){3})?(-?)[ \t]*(?:₹|INR|Rs\.?)[ \t]*(${numeric})[ \t]*$`, 'im'));
+  const roundOff = rounding ? (rounding[1] ? -1 : 1)*value(rounding[2]) : 0;
+  const taxRows = [...text.matchAll(new RegExp(String.raw`^([CSI]GST)[ \t]*@?[ \t]*(\d+(?:\.\d+)?)%[ \t]+(?:-[ \t]+)*(?:₹|INR|Rs\.?)[ \t]*(${numeric})[ \t]*$`, 'gim'))];
+  const gst = taxRows.reduce((sum,row)=>sum+cents(value(row[3])),0)/100;
+  const gstRate = taxRows.reduce((sum,row)=>sum+value(row[2]),0);
+  const taxTypes = taxRows.map(row=>row[1].toUpperCase()).sort().join(',');
+  if (!['CGST,SGST','IGST'].includes(taxTypes) || amount == null ||
+    Math.abs(cents(taxable+gst+roundOff)-cents(amount))>1 ||
+    taxRows.some(row=>Math.abs(cents(taxable*value(row[2])/100)-cents(value(row[3])))>1)) return null;
+  const supplier = lines.slice(header+1).find(line=>line.trim())?.trim() ?? '';
+  const sellerBlock = text.split(/^\s*Bill[ \t]+To\b/im)[0];
+  const gstin = findText(sellerBlock, 'GSTIN', '([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])');
+  return {reference,supplier,gstin,product,quantity,quantityUnit:unit.toUpperCase(),unitPrice,gst,gstRate,amount,roundOff,
+    kind:'Product',platform:'Direct',reviewRequired:true};
+}
+
 export function parseInvoice(raw, sellerColumn = '') {
-  const text = raw.normalize('NFKC').replace(/[\r\f]/g, '').replace(/[\u00a0\t]+/g, ' ').replace(/[−–](?=[ \t]*(?:₹|\d))/g, '-').replace(/-[ \t]*₹/g, '₹-');
+  let text = raw.normalize('NFKC').replace(/[\r\f]/g, '').replace(/[\u00a0\t]+/g, ' ').replace(/[−–](?=[ \t]*(?:₹|\d))/g, '-');
   if (text.split('\n').slice(0,8).some(line=>/^\s*(?:sales[ \t]+)?quotation\s*:?\s*$/i.test(line))) {
     const reference = text.match(/\bQT[/-][A-Z0-9][A-Z0-9./_-]*/i)?.[0] || '';
     const rows = [...text.matchAll(new RegExp(
@@ -97,6 +128,9 @@ export function parseInvoice(raw, sellerColumn = '') {
     ))];
     return {documentType:'quotation',reference,amount:rows.length===1?value(rows[0][1]):null};
   }
+  const offline = offlineTaxInvoice(text);
+  if (offline) return offline;
+  text = text.replace(/-[ \t]*₹/g, '₹-');
   const reference = findText(text, String.raw`Invoice[ \t]*(?:Number|No\.?|#|ID)|Bill[ \t]*(?:No\.?|Number)|Tax Invoice(?=[ \t]*:)`, id);
   const labeledOrder = findText(text, String.raw`(?:Order|Sub[ -]?Order)[ \t]*(?:ID|Number|No\.?)`, id);
   const supplier = invoiceSupplier(text, sellerColumn);

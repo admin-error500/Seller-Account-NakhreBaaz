@@ -82,7 +82,7 @@ export function verifyInvoice(line) {
   return {
     kind: line.kind, supplier, reference, amount, gst, gstin, verified: true,
     orderId: line.orderId?.trim() || '', platform: line.platform?.trim() || '',
-    product: line.product?.trim() || '', quantity,
+    product: line.product?.trim() || '', quantity, quantityUnit:line.quantityUnit?.trim() || '',
     unitPrice: line.unitPrice === '' || line.unitPrice == null ? null : parseMoney(line.unitPrice, 'invoice unit price'),
     discount: line.discount === '' || line.discount == null ? null : parseMoney(line.discount, 'invoice discount'),
     path: line.path ?? null, sha256: line.sha256 ?? null,
