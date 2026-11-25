@@ -520,16 +520,20 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
     <ul className="entry-invoices">
       {(selectedEntry.invoiceDetails??[]).map((invoice,index)=>{
         const path=invoiceAttachment(selectedEntry,invoice);
-        return <li key={index}><span>{invoice.kind} · {invoice.reference}</span>
-          {invoice.verified&&<span>{rupees(invoice.amount)} · GST {rupees(invoice.gst)}</span>}
-          {path&&<button type="button" className="compact-button"
-            onClick={()=>{setEntryError('');viewInvoice(path,setEntryError)}}>View invoice {invoice.reference}</button>}
+        return <li key={index} className="entry-invoice">
+          <span className="entry-invoice-reference">{invoice.kind} · {invoice.reference}</span>
+          {invoice.verified&&<span className="entry-invoice-amount">
+            <b>{rupees(invoice.amount)}</b><small>GST {rupees(invoice.gst)}</small>
+          </span>}
+          {path&&<button type="button" className="compact-button entry-invoice-view" aria-label={`View invoice ${invoice.reference}`}
+            onClick={()=>{setEntryError('');viewInvoice(path,setEntryError)}}>View</button>}
         </li>;
       })}
       {selectedEntry.invoicePath&&!(selectedEntry.invoiceDetails??[]).some(invoice=>
         invoiceAttachment(selectedEntry,invoice)===selectedEntry.invoicePath)&&
-        <li><button type="button" className="compact-button"
-          onClick={()=>{setEntryError('');viewInvoice(selectedEntry.invoicePath,setEntryError)}}>View invoice {selectedEntry.invoice}</button></li>}
+        <li className="entry-invoice"><span className="entry-invoice-reference">{selectedEntry.invoice||'Attached invoice'}</span>
+          <button type="button" className="compact-button entry-invoice-view" aria-label={`View invoice ${selectedEntry.invoice??''}`.trim()}
+            onClick={()=>{setEntryError('');viewInvoice(selectedEntry.invoicePath,setEntryError)}}>View</button></li>}
       {!(selectedEntry.invoiceDetails??[]).length&&!selectedEntry.invoicePath&&<li>No invoices saved.</li>}
     </ul>
     {entryError&&<p role="alert">{entryError}</p>}

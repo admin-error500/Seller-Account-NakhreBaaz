@@ -561,3 +561,35 @@ test('exports only checked rows with durable invoice links and keeps the actions
   await request;
   await expect(page).toHaveURL(/\/object\/sign\/purchase-invoices\/test.pdf/);
 });
+
+test('aligns invoice view buttons and keeps the details header visible while scrolling', async ({page}) => {
+  await useSellerApi(page,[{
+    id:'1',name:'Printer',supplier:'Vendor with a long company name',qty:1,rate:8721,actual_payment:8721,
+    invoice_details:[
+      {kind:'Fee',reference:'A-LONG-DELIVERY-INVOICE-REFERENCE',verified:true,path:'test/delivery.pdf',amount:1223,gst:58.24},
+      {kind:'Product',reference:'A-LONG-PRODUCT-INVOICE-REFERENCE',verified:true,path:'test/product.pdf',amount:7442,gst:1135.22},
+      {kind:'Fee',reference:'SHORT',verified:true,path:'test/fee.pdf',amount:56,gst:8.54},
+    ],
+  }]);
+  await openPurchasePage(page,'Machines & Equipment');
+  await page.getByRole('button',{name:'Open entry',exact:true}).click();
+  const dialog = page.getByRole('dialog',{name:'Machines & Equipment entry'});
+  const views = dialog.getByRole('button',{name:/^View invoice/});
+  await expect(views).toHaveCount(3);
+  for (const viewport of [{width:1220,height:500},{width:390,height:600}]) {
+    await page.setViewportSize(viewport);
+    const coordinates = await views.evaluateAll(buttons=>buttons.map(button=>{
+      const {x,width}=button.getBoundingClientRect();
+      return [x,width];
+    }));
+    expect(new Set(coordinates.map(values=>values.join(','))).size).toBe(1);
+    const close = dialog.getByRole('button',{name:'Close',exact:true});
+    const top = (await close.boundingBox()).y;
+    const body = dialog.locator('.entry-details-body');
+    await body.evaluate(element=>{element.scrollTop=element.scrollHeight});
+    expect(await body.evaluate(element=>element.scrollTop)).toBeGreaterThan(0);
+    expect((await close.boundingBox()).y).toBe(top);
+  }
+  await dialog.getByRole('button',{name:'Close',exact:true}).click();
+  await expect(dialog).toBeHidden();
+});
