@@ -77,7 +77,7 @@ export const isAddressHeading = value =>
 
 function invoiceSupplier(text, sellerColumn) {
   const source = sellerColumn || text;
-  const candidate = findText(source, String.raw`Sold[ \t]*By|Supplier(?:[ \t]*Name)?|Seller[ \t]*Name|Billed[ \t]*From|Issued[ \t]*By`, '([^\\n]+)');
+  const candidate = findText(source, String.raw`Sold[ \t]*By|Supplier(?:[ \t]*Name)?|Seller[ \t]*Name|Vendor[ \t]*Name|Billed[ \t]*From|Issued[ \t]*By`, '([^\\n]+)');
   const name = candidate.split(/(?:^|\s+)(?:GSTIN|PAN|Billing Address|Ship(?:ping)? Address|Registered Office Address)\b|\s*,/i)[0].trim();
   if (!name || isAddressHeading(name)) return '';
   const lines = source.split('\n');
@@ -131,7 +131,7 @@ export function parseInvoice(raw, sellerColumn = '') {
   const offline = offlineTaxInvoice(text);
   if (offline) return offline;
   text = text.replace(/-[ \t]*₹/g, '₹-');
-  const reference = findText(text, String.raw`Invoice[ \t]*(?:Number|No\.?|#|ID)|Bill[ \t]*(?:No\.?|Number)|Tax Invoice(?=[ \t]*:)`, id);
+  const reference = findText(text, String.raw`Invoice[ \t]*(?:Number|No\.?|#|ID|Reference|Ref\.?)|Bill[ \t]*(?:No\.?|Number)|Tax Invoice(?=[ \t]*:)`, id);
   const labeledOrder = findText(text, String.raw`(?:Order|Sub[ -]?Order)[ \t]*(?:ID|Number|No\.?)`, id);
   const supplier = invoiceSupplier(text, sellerColumn);
   const gstin = findText(sellerColumn || text, String.raw`(?:Supplier[ \t]+|Seller[ \t]+)?(?:GSTIN(?:[ \t]*(?:No\.?|Number))?|GST[ \t]+Registration[ \t]+(?:No\.?|Number))`, '([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])');
@@ -143,7 +143,7 @@ export function parseInvoice(raw, sellerColumn = '') {
     : labeledOrder;
   const service = serviceInvoiceTable(text);
   const amazonTable = platform === 'Amazon' ? amazonDiscountTable(text) : null;
-  const amount = findAmount(text, String.raw`Grand[ \t]+Total|Invoice[ \t]+Total|Total[ \t]+Invoice[ \t]+(?:Amount|Value)|Total[ \t]+Payable|Amount[ \t]+Payable`)
+  const amount = findAmount(text, String.raw`Grand[ \t]+Total|Invoice[ \t]+(?:Total|Amount)|Bill[ \t]+Total|Net[ \t]+Payable|Total[ \t]+Invoice[ \t]+(?:Amount|Value)|Total[ \t]+Payable|Amount[ \t]+Payable`)
     ?? findAmount(text, String.raw`Total[ \t]+Amount(?:[ \t]+(?:Including|Incl\.?)\s*GST)?|Total`) ?? amazonTable?.total ?? service?.total ?? null;
   const taxable = findAmount(text, String.raw`(?:Total[ \t]+)?(?:Taxable[ \t]+(?:Amount|Value)|Subtotal(?:[ \t]+before[ \t]+tax)?)`);
   const totalGst = findAmount(text, String.raw`(?:Total[ \t]+(?:GST|Tax)(?:[ \t]+Amount)?|GST[ \t]+Amount)`);

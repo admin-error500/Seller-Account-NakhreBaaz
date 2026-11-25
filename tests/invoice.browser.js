@@ -11,9 +11,10 @@ const sample = [
 ];
 
 function makePdf(lines, jpeg) {
-  const content = jpeg ? 'q 600 0 0 370 0 0 cm /Im Do Q'
-    : 'BT /F1 16 Tf 28 340 Td ' + lines.map(line => `(${line}) Tj`).join(' 0 -26 Td ') + ' ET';
-  const resources = jpeg ? '/XObject << /Im 5 0 R >>' : '/Font << /F1 5 0 R >>';
+  const text = lines.length ? 'BT /F1 16 Tf '+(jpeg?'3 Tr ':'')+'28 340 Td '
+    + lines.map(line => `(${line}) Tj`).join(' 0 -26 Td ')+' ET' : '';
+  const content = jpeg ? 'q 600 0 0 370 0 0 cm /Im Do Q '+text : text;
+  const resources = jpeg ? '/XObject << /Im 5 0 R >>'+(lines.length?' /Font << /F1 6 0 R >>':'') : '/Font << /F1 5 0 R >>';
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -22,6 +23,8 @@ function makePdf(lines, jpeg) {
     jpeg ? Buffer.concat([Buffer.from(`<< /Type /XObject /Subtype /Image /Width 1200 /Height 740 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`),
       jpeg, Buffer.from('\nendstream')]) : '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
   ];
+  if (jpeg&&lines.length) objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const objectCount=objects.length+1;
   const chunks = [Buffer.from('%PDF-1.4\n')];
   const offsets = [];
   let length = chunks[0].length;
@@ -31,8 +34,8 @@ function makePdf(lines, jpeg) {
     chunks.push(entry);
     length += entry.length;
   }
-  chunks.push(Buffer.from(`xref\n0 6\n0000000000 65535 f \n${offsets.map(offset =>
-    String(offset).padStart(10,'0')+' 00000 n \n').join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${length}\n%%EOF\n`));
+  chunks.push(Buffer.from(`xref\n0 ${objectCount}\n0000000000 65535 f \n${offsets.map(offset =>
+    String(offset).padStart(10,'0')+' 00000 n \n').join('')}trailer\n<< /Size ${objectCount} /Root 1 0 R >>\nstartxref\n${length}\n%%EOF\n`));
   return Buffer.concat(chunks);
 }
 
@@ -154,7 +157,7 @@ test('reads PDF and adds later fee without increasing stock or payment', async (
   await expect(page.getByRole('row').filter({hasText:'Documented purchase GST'}).getByText('₹1,143.76')).toBeVisible();
 });
 
-for (const format of ['png','jpeg','scanned pdf']) {
+for (const format of ['png','jpeg','scanned pdf','hybrid pdf']) {
   test(`uses local OCR for ${format}`, async ({page}) => {
     await useSellerApi(page);
     await openPurchasePage(page, 'Machines & Equipment');
@@ -162,8 +165,9 @@ for (const format of ['png','jpeg','scanned pdf']) {
     await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
     const imageType = format==='png'?'image/png':'image/jpeg';
     const image = await imageInvoice(page,imageType);
-    const file = format==='scanned pdf'
-      ? {name:'scan.pdf',mimeType:'application/pdf',buffer:makePdf([],image)}
+    const file = format.endsWith(' pdf')
+      ? {name:'scan.pdf',mimeType:'application/pdf',buffer:makePdf(format==='hybrid pdf'?
+        ['A long incomplete PDF text layer can contain plenty of irrelevant content and no useful invoice fields.']:[],image)}
       : {name:`invoice.${format}`,mimeType:imageType,buffer:image};
     await page.getByLabel('Invoice file').setInputFiles(file);
     await expect(page.getByRole('status')).toHaveText('Review the extracted fields before saving.',{timeout:30000});
@@ -594,4 +598,28 @@ test('aligns invoice view buttons and keeps the details header visible while scr
   }
   await dialog.getByRole('button',{name:'Close',exact:true}).click();
   await expect(dialog).toBeHidden();
+});
+
+test('keeps a partially readable invoice attached while the missing GST is entered manually', async ({page}) => {
+  const {db,uploads} = await useSellerApi(page,[{
+    id:'1',name:'Equipment',supplier:'Example Supplier',qty:1,rate:500,actual_payment:500,
+    invoice_revision:0,invoice_details:[],
+  }]);
+  await openPurchasePage(page,'Machines & Equipment');
+  await page.getByRole('button',{name:'Add invoices',exact:true}).click();
+  const lines=['Tax Invoice','Vendor Name: Example Supplier','Invoice Ref: VA-123','Bill Total: 500.00'];
+  await page.getByLabel('Invoice file').setInputFiles({
+    name:'supplier.pdf',mimeType:'application/pdf',buffer:makePdf(lines),
+  });
+  await expect(page.getByRole('status')).toContainText('attached document: GST.');
+  await expect(page.getByRole('button',{name:'View selected file',exact:true})).toBeVisible();
+  await expect(page.getByLabel('Invoice number',{exact:true})).toHaveValue('VA-123');
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('500');
+  await page.getByLabel('Documented GST (₹)',{exact:true}).fill('0');
+  await expect(page.getByText('Enter these details from the attached document:',{exact:false})).toHaveCount(0);
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save reconciliation'}).click();
+  await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
+  expect(db.equipment_purchases[0].invoice_details[0]).toMatchObject({amount:500,gst:0,reference:'VA-123'});
+  expect(uploads).toEqual(['POST']);
 });

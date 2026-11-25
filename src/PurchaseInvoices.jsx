@@ -1,3 +1,4 @@
+import {missingInvoiceFields} from './invoiceExtraction.js';
 import React from 'react';
 import {invoiceFileType, readInvoice} from './invoiceReader.js';
 
@@ -32,8 +33,11 @@ export default function PurchaseInvoices({lines, setLines, onApply, onExtract, s
       change(line.id, {notice: error.message});
       return;
     }
-    const replacement = line.file ? Object.fromEntries([...textFields, ...amountFields].map(([key]) => [key, ''])) : {};
-    change(line.id, {...replacement, reading: true, file, quotation:false, notice: 'Reading invoice…'});
+    const replacement = line.file ? {
+      ...Object.fromEntries([...textFields,...amountFields].map(([key])=>[key,''])),
+      kind:'Product',gstRate:null,productDiscount:null,roundOff:null,multipleProducts:false,
+    } : {};
+    change(line.id, {...replacement, reading: true, file, quotation:false, needsReview:false, notice: 'Reading invoice…'});
     try {
       const parsed = await readInvoice(file);
       if (!active.current) return;
@@ -48,10 +52,13 @@ export default function PurchaseInvoices({lines, setLines, onApply, onExtract, s
         return;
       }
       const extracted = Object.fromEntries(Object.entries(parsed).filter(([, value]) => value != null && value !== ''));
-      change(line.id, {...extracted, gstRate: parsed.gstRate, notice: 'Review the extracted fields before saving.'});
+      const missing=missingInvoiceFields(parsed);
+      change(line.id, {...extracted,gstRate:parsed.gstRate,needsReview:missing.length>0,
+        notice:missing.length?'':'Review the extracted fields before saving.'});
       onExtract?.({...line, ...replacement, ...extracted, gstRate: parsed.gstRate});
     } catch (error) {
-      if (active.current) change(line.id, {notice: `Automatic reading failed. Enter the invoice details manually. ${error.message}`});
+      if (active.current) change(line.id, {needsReview:true,
+        notice:`Automatic reading couldn’t finish. ${error.message}`});
     } finally {
       if (active.current) change(line.id, {reading: false});
     }
@@ -64,6 +71,11 @@ export default function PurchaseInvoices({lines, setLines, onApply, onExtract, s
       <legend>Invoice {index + 1}</legend>
       <label>Invoice file<input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp"
         onChange={event => selectFile(line, event)}/></label>
+      {line.file&&!line.reading&&<button type="button" className="compact-button" onClick={()=>{
+        const url=URL.createObjectURL(line.file);
+        window.open(url,'_blank','noopener,noreferrer');
+        setTimeout(()=>URL.revokeObjectURL(url),60000);
+      }}>View selected file</button>}
       {line.path && <button type="button" className="compact-button" onClick={() => viewInvoice(line.path)}>View existing file</button>}
       <label>Invoice type<select value={line.kind} onChange={event => change(line.id, {kind: event.target.value})}>
         <option>Product</option><option>Fee</option>
@@ -75,7 +87,12 @@ export default function PurchaseInvoices({lines, setLines, onApply, onExtract, s
         <input required={key === 'amount' || key === 'gst'} type="number" min="0"
           step={key === 'quantity' ? 'any' : '0.01'} value={line[key] ?? ''}
           onChange={event => change(line.id, {[key]: event.target.value})}/></label>)}
-      {line.notice && <small className="invoice-notice" role="status">{line.notice}</small>}
+      {(line.notice||(line.needsReview&&missingInvoiceFields(line).length>0))&&
+        <small className="invoice-notice" role="status">
+          {line.notice}{line.notice&&line.needsReview?' ':''}
+          {line.needsReview&&missingInvoiceFields(line).length>0&&
+            `Enter these details from the attached document: ${missingInvoiceFields(line).join(', ')}.`}
+        </small>}
       <div className="invoice-actions">
         {onApply && !line.quotation && line.kind === 'Product' && <button type="button" className="compact-button" onClick={() => onApply(line)}>Apply to purchase</button>}
         <button type="button" className="compact-button" onClick={() => {
