@@ -1,3 +1,4 @@
+import {readFile} from 'node:fs/promises';
 import {expect, test} from '@playwright/test';
 
 const seller = '10000000-0000-0000-0000-000000000001';
@@ -519,4 +520,44 @@ test('opens one saved purchase with its own amounts and attachment for a non-adm
   await expect(dialog.getByText('No invoices saved.',{exact:true})).toBeVisible();
   await dialog.getByRole('button',{name:'Close',exact:true}).click();
   await expect(dialog).toBeHidden();
+});
+
+test('exports only checked rows with durable invoice links and keeps the actions aligned', async ({page}) => {
+  const invoice = {kind:'Product',reference:'A/1',supplier:'Acme',verified:true,amount:500,gst:0,path:'test/entry.pdf'};
+  await useSellerApi(page,[
+    {id:'1',name:'Selected printer',supplier:'Acme',qty:1,rate:500,actual_payment:500,
+      invoice_details:[invoice,{...invoice,reference:'A-2',path:'test/entry-2.pdf',amount:0}]},
+    {id:'2',name:'Skipped printer',supplier:'Other',qty:1,rate:500,actual_payment:500,invoice_details:[]},
+    {id:'3',name:'Selected spare',supplier:'Acme',qty:1,rate:500,actual_payment:500,invoice_details:[]},
+  ]);
+  await openPurchasePage(page,'Machines & Equipment');
+  const exportButton=page.getByRole('button',{name:'Export selected CSV (0)',exact:true});
+  await expect(exportButton).toBeDisabled();
+  await page.getByRole('checkbox',{name:'Select Selected printer',exact:true}).check();
+  await page.getByRole('checkbox',{name:'Select Selected spare',exact:true}).check();
+  const row=page.getByRole('row').filter({has:page.getByRole('cell',{name:'Selected printer',exact:true})});
+  const actions=row.locator('.row-actions button');
+  const geometry=await actions.evaluateAll(buttons=>buttons.map(button=>{
+    const {y,width,height}=button.getBoundingClientRect();
+    return [y,width,height];
+  }));
+  expect(geometry).toHaveLength(4);
+  expect(new Set(geometry.map(values=>values.join(','))).size).toBe(1);
+
+  const downloading=page.waitForEvent('download');
+  await page.getByRole('button',{name:'Export selected CSV (2)',exact:true}).click();
+  const download=await downloading;
+  expect(download.suggestedFilename()).toBe('equipmentPurchases-selected.csv');
+  const csv=await readFile(await download.path(),'utf8');
+  expect(csv).toContain('Selected printer');
+  expect(csv).toContain('Selected spare');
+  expect(csv).not.toContain('Skipped printer');
+  expect(csv).toContain('"invoice_link_1","invoice_link_2"');
+  const link=csv.match(/https?:\/\/[^"]+invoiceType=equipmentPurchases[^"]+/)?.[0];
+  expect(link).toBeTruthy();
+  expect(link).not.toContain('token=');
+  const request=page.waitForRequest(req=>req.method()==='POST'&&req.url().includes('/object/sign/purchase-invoices/test/entry.pdf'));
+  await page.goto(link);
+  await request;
+  await expect(page).toHaveURL(/\/object\/sign\/purchase-invoices\/test.pdf/);
 });
