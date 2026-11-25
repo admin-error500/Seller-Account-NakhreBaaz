@@ -208,3 +208,16 @@ test('combines compatible OCR fields and leaves conflicting amounts for manual r
   assert.equal(mergeInvoiceReads(primary,{reference:'va-123',amount:null,gst:8}).gst,null);
   assert.equal(mergeInvoiceReads({kind:'Product'},{kind:'Fee',reference:'F-123',amount:500,gst:8}).kind,'Fee');
 });
+
+test('reads split CGST and SGST goods invoices without mistaking quantity for total', () => {
+  const text=[
+    'TAX INVOICE','Example Equipment LLP','GSTIN/UIN: 27ABCDE1234F1Z5','Buyer (Bill to) Invoice No.: APV/26-27/R6040',
+    'Sl Description of Goods HSN/SAC Quantity Rate per Disc. % Amount Taxable CGST SGST/UTGST Total',
+    '1 Heat Press Machine 84624900 1 pcs 10,000.00 pcs 10,000.00 10,000.00 9% 900.00 9% 900.00 11,800.00',
+    'Total 1 pcs INR 11,800.00 10,000.00 900.00 900.00',
+  ].join('\n');
+  const invoice=parseInvoice(text);
+  assert.deepEqual([invoice.supplier,invoice.reference,invoice.gstin,invoice.product,invoice.quantity,invoice.unitPrice,
+    invoice.amount,invoice.gst,invoice.gstRate],['Example Equipment LLP','APV/26-27/R6040','27ABCDE1234F1Z5','Heat Press Machine',1,10000,11800,1800,18]);
+  assert.equal(parseInvoice(text.replace('INR 11,800.00','INR 11,900.00')).amount,null);
+});

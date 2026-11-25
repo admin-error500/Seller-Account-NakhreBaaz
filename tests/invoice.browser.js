@@ -623,3 +623,32 @@ test('keeps a partially readable invoice attached while the missing GST is enter
   expect(db.equipment_purchases[0].invoice_details[0]).toMatchObject({amount:500,gst:0,reference:'VA-123'});
   expect(uploads).toEqual(['POST']);
 });
+
+test('fills the existing fields for the split-tax equipment invoice', async ({page}) => {
+  const {db}=await useSellerApi(page);
+  await openPurchasePage(page,'Machines & Equipment');
+  await page.getByRole('button',{name:'+ Add Entry'}).click();
+  await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+  const file=process.env.SELLER_TEST_SPLIT_TAX_PDF??{
+    name:'equipment.pdf',mimeType:'application/pdf',buffer:makePdf([
+      'TAX INVOICE','Example Equipment LLP','GSTIN/UIN: 27ABCDE1234F1Z5','Invoice No.: APV/26-27/R6040',
+      'Sl Description of Goods HSN/SAC Quantity Rate per Disc. % Amount Taxable CGST SGST/UTGST Total',
+      '1 Heat Press Machine 84624900 1 pcs 10000.00 pcs 10000.00 10000.00 9% 900.00 9% 900.00 11800.00',
+      'Total 1 pcs INR 11800.00 10000.00 900.00 900.00',
+    ]),
+  };
+  await page.getByLabel('Invoice file').setInputFiles(file);
+  await expect(page.getByLabel('Invoice supplier',{exact:true})).toHaveValue(process.env.SELLER_TEST_SPLIT_TAX_PDF
+    ?'APPARELTECH VENTURES LLP':'Example Equipment LLP');
+  await expect(page.getByLabel('Invoice number',{exact:true})).toHaveValue('APV/26-27/R6040');
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('11800');
+  await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('1800');
+  await expect(page.getByLabel('Invoice quantity',{exact:true})).toHaveValue('1');
+  await expect(page.getByLabel('Item unit price before discount (₹)',{exact:true})).toHaveValue('10000');
+  await page.getByLabel('Actual payment (₹)').fill('11800');
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save Entry'}).click();
+  await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
+  expect(db.equipment_purchases[0]).toMatchObject({qty:1,rate:10000,actual_payment:11800,
+    invoice_details:[{amount:11800,gst:1800}]});
+});
