@@ -432,3 +432,24 @@ test('records and applies an advance once, separating invoice verification from 
   await page.getByRole('button',{name:'Supplier Advances',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Unused supplier advances · ₹0.00'})).toBeVisible();
 });
+
+test('explains a supplier quotation without applying it to the purchase', async ({page}) => {
+  const {db,uploads} = await useSellerApi(page);
+  await openPurchasePage(page,'Material Purchases');
+  await page.getByRole('button',{name:'+ Add Entry'}).click();
+  await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+  const file = process.env.SELLER_TEST_QUOTATION_PDF ??
+    {name:'quote.pdf',mimeType:'application/pdf',buffer:makePdf([
+      'QUOTATION','Example Supplier','Quotation No. Quotation Date','QT/26-27/123',
+      'TOTAL 0.8 2100.00','Total 1780.00 160.20 160.20 320.40',
+    ])};
+  await page.getByLabel('Invoice file').setInputFiles(file);
+  await expect(page.getByRole('status').filter({hasText:'Upload the supplier’s final tax invoice'})).toBeVisible();
+  if (process.env.SELLER_TEST_QUOTATION_PDF) {
+    await expect(page.getByRole('status')).toContainText('Quoted total ₹2,100.00');
+  }
+  await expect(page.getByLabel('Invoice number',{exact:true})).toHaveValue('');
+  await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('');
+  expect(db.material_purchases).toHaveLength(0);
+  expect(uploads).toEqual([]);
+});

@@ -176,3 +176,10 @@ test('an allocated supplier advance reduces the due without inflating direct pay
   assert.equal(details.mismatch,0);
   assert.equal(purchaseDetails({...row,actualPayment:6000}).status,'Reconciled');
 });
+
+test('identifies a quotation and reads its quoted total without treating sales tax as invoice GST', () => {
+  const text = 'QUOTATION\nExample Supplier\nQuotation No. Quotation Date\nQT/26-27/123\nTOTAL 0.8 ₹ 2,100\nTotal 1,780 160.2 160.2 ₹320.4';
+  const quotation = parseInvoice(text);
+  assert.deepEqual(quotation,{documentType:'quotation',reference:'QT/26-27/123',amount:2100});
+  assert.throws(()=>verifyInvoice({...quotation,quotation:true}),/final tax invoice/);
+});

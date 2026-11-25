@@ -66,6 +66,7 @@ export function normalizeInvoiceKey(value) {
 }
 
 export function verifyInvoice(line) {
+  if (line.quotation) throw Error('Replace the quotation with the final tax invoice or remove this entry.');
   const reference = line.reference?.trim();
   const supplier = line.supplier?.trim();
   if (!supplier || !reference) throw Error('Enter a supplier and invoice number for each document.');

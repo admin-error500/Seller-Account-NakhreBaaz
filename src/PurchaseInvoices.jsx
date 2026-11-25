@@ -22,20 +22,31 @@ export default function PurchaseInvoices({lines, setLines, onApply, onExtract, s
     setLines(previous => previous.map(line => line.id === id ? {...line, ...values} : line));
   };
   async function selectFile(line, event) {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
     try {
       invoiceFileType(file);
     } catch (error) {
-      event.target.value = '';
+      input.value = '';
       change(line.id, {notice: error.message});
       return;
     }
     const replacement = line.file ? Object.fromEntries([...textFields, ...amountFields].map(([key]) => [key, ''])) : {};
-    change(line.id, {...replacement, reading: true, file, notice: 'Reading invoice…'});
+    change(line.id, {...replacement, reading: true, file, quotation:false, notice: 'Reading invoice…'});
     try {
       const parsed = await readInvoice(file);
       if (!active.current) return;
+      if (parsed.documentType === 'quotation') {
+        input.value = '';
+        const reference = parsed.reference ? ` ${parsed.reference}` : '';
+        const total = parsed.amount == null ? '' : ` · Quoted total ${new Intl.NumberFormat('en-IN',{
+          style:'currency',currency:'INR',
+        }).format(parsed.amount)}`;
+        change(line.id, {...line,file:null,quotation:true,
+          notice:`Quotation${reference}${total}. Upload the supplier’s final tax invoice to save it here.`});
+        return;
+      }
       const extracted = Object.fromEntries(Object.entries(parsed).filter(([, value]) => value != null && value !== ''));
       change(line.id, {...extracted, gstRate: parsed.gstRate, notice: 'Review the extracted fields before saving.'});
       onExtract?.({...line, ...replacement, ...extracted, gstRate: parsed.gstRate});
@@ -66,7 +77,7 @@ export default function PurchaseInvoices({lines, setLines, onApply, onExtract, s
           onChange={event => change(line.id, {[key]: event.target.value})}/></label>)}
       {line.notice && <small className="invoice-notice" role="status">{line.notice}</small>}
       <div className="invoice-actions">
-        {onApply && line.kind === 'Product' && <button type="button" className="compact-button" onClick={() => onApply(line)}>Apply to purchase</button>}
+        {onApply && !line.quotation && line.kind === 'Product' && <button type="button" className="compact-button" onClick={() => onApply(line)}>Apply to purchase</button>}
         <button type="button" className="compact-button" onClick={() => {
           setReviewed(false);
           setLines(previous => previous.filter(item => item.id !== line.id));

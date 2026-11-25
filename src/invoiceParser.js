@@ -90,6 +90,13 @@ function invoiceSupplier(text, sellerColumn) {
 
 export function parseInvoice(raw, sellerColumn = '') {
   const text = raw.normalize('NFKC').replace(/[\r\f]/g, '').replace(/[\u00a0\t]+/g, ' ').replace(/[−–](?=[ \t]*(?:₹|\d))/g, '-').replace(/-[ \t]*₹/g, '₹-');
+  if (text.split('\n').slice(0,8).some(line=>/^\s*(?:sales[ \t]+)?quotation\s*:?\s*$/i.test(line))) {
+    const reference = text.match(/\bQT[/-][A-Z0-9][A-Z0-9./_-]*/i)?.[0] || '';
+    const rows = [...text.matchAll(new RegExp(
+      String.raw`^[ \t]*Total[ \t]*:?[ \t]+(?:\d+(?:\.\d+)?[ \t]+)?₹[ \t]*(${numeric})[ \t]*$`, 'gim'
+    ))];
+    return {documentType:'quotation',reference,amount:rows.length===1?value(rows[0][1]):null};
+  }
   const reference = findText(text, String.raw`Invoice[ \t]*(?:Number|No\.?|#|ID)|Bill[ \t]*(?:No\.?|Number)|Tax Invoice(?=[ \t]*:)`, id);
   const labeledOrder = findText(text, String.raw`(?:Order|Sub[ -]?Order)[ \t]*(?:ID|Number|No\.?)`, id);
   const supplier = invoiceSupplier(text, sellerColumn);
