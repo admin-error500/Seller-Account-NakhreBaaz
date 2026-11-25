@@ -43,16 +43,27 @@
 .invoice-action:is(:hover,:focus-visible) .invoice-action-tooltip{visibility:visible}
 .actions-cell:has(.invoice-action:is(:hover,:focus-visible)){z-index:3}
 
-.entry-details{border:1px solid #dce5f2;border-radius:14px;padding:22px;width:min(640px,calc(100% - 28px));max-height:calc(100% - 28px);color:#172234;box-shadow:0 18px 60px #0f172a35}
+.entry-details{border:1px solid #dce5f2;border-radius:14px;margin:auto;padding:0;width:min(680px,calc(100% - 28px));max-height:calc(100% - 28px);color:#172234;box-shadow:0 18px 60px #0f172a35;overflow:hidden}
+.entry-details[open]{display:flex;flex-direction:column}
 .entry-details::backdrop{background:#0f172a70}
-.entry-details-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.entry-details-heading{display:flex;justify-content:space-between;align-items:center;flex:none;gap:12px;padding:14px 22px;border-bottom:1px solid #dce5f2}
 .entry-details-heading h2{margin:0}
-.entry-details-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:14px}
+.entry-details-body{padding:18px 22px;min-height:0;overflow:auto;overscroll-behavior:contain}
+.entry-details-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:14px;margin:0}
 .entry-details-grid>div,.entry-invoices li{background:#f5f8fc;border-radius:8px;padding:10px}
-.entry-details-grid dt{color:#526480;font-size:12px}
+.entry-details-grid dt,.entry-invoice-amount small{color:#526480;font-size:12px}
 .entry-details-grid dd{margin:5px 0 0;overflow-wrap:anywhere}
-.entry-invoices{list-style:none;padding:0;display:grid;gap:8px}
-.entry-invoices li{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.entry-invoices{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:8px}
+.entry-invoice{display:grid;grid-template-columns:minmax(0,1fr) max-content 64px;align-items:center;gap:12px}
+.entry-invoice-reference{grid-column:1;overflow-wrap:anywhere}
+.entry-invoice-amount{grid-column:2;display:grid;gap:2px;text-align:right;font-variant-numeric:tabular-nums}
+.entry-invoice-view{grid-column:3;width:100%;margin:0}
+@media(max-width:420px){
+  .entry-details-heading,.entry-details-body{padding-inline:14px}
+  .entry-invoice{grid-template-columns:minmax(0,1fr) 56px;gap:4px 8px}
+  .entry-invoice-amount{grid-column:1;grid-row:2;text-align:left}
+  .entry-invoice-view{grid-column:2;grid-row:1 / span 2}
+}
 
 .entry-table-toolbar{min-height:44px;margin:0 0 18px;flex-wrap:wrap;align-items:center}
 .entry-table-toolbar h2{margin:0}

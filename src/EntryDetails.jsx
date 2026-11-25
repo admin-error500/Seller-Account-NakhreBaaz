@@ -15,9 +15,11 @@ export default function EntryDetails({title, fields, children, onClose}) {
       <h2 id={heading}>{title}</h2>
       <button type="button" onClick={()=>dialog.current.close()} autoFocus>Close</button>
     </div>
-    <dl className="entry-details-grid">
-      {fields.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value ?? '—'}</dd></div>)}
-    </dl>
-    {children}
+    <div className="entry-details-body">
+      <dl className="entry-details-grid">
+        {fields.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value ?? '—'}</dd></div>)}
+      </dl>
+      {children}
+    </div>
   </dialog>;
 }
