@@ -3,7 +3,7 @@ import {invoiceFileType, readInvoice} from './invoiceReader.js';
 
 const textFields = [
   ['supplier', 'Invoice supplier'], ['reference', 'Invoice number'], ['gstin', 'Supplier GSTIN'],
-  ['orderId', 'Invoice order ID'], ['platform', 'Marketplace'], ['product', 'Product description'],
+  ['quantityUnit', 'Invoice quantity unit'], ['orderId', 'Invoice order ID'], ['platform', 'Marketplace'], ['product', 'Product description'],
 ];
 const amountFields = [
   ['quantity', 'Invoice quantity'], ['unitPrice', 'Invoice unit price before discount (₹)'],
