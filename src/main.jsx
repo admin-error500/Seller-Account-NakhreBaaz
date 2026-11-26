@@ -11,6 +11,7 @@ import {affectsStock, availableMaterials, entryChanges, entryFormValues, product
 import React,{useState,useMemo,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Eye, FilePlus, FileCheck, Upload, Pencil, Wallet, Trash2, Boxes} from 'lucide-react';
+import brandLogo from './assets/nakhrebaaz-logo.webp';
 import './style.css';
 import {supabase,configured,fetchAll,insertEntry,updateProduct,updateSavedEntry,deleteEntry,updatePurchaseInvoices,fromRow,findPurchase,insertPurchase} from './supabase';
 const sizes=['14','16','18','20','22','24','26','28','30','32','34','36','38','40','42','44','46','48','S','M','L','XL','XXL','3XL'];
@@ -465,11 +466,31 @@ function entryFields(row) {
 
 if(loading)return <main><h1>Loading Seller Hub...</h1></main>;
 if(!configured)return <main><h1>Supabase configuration required</h1><p>Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel project environment variables.</p></main>;
-if(!session)return <main className="login"><h1>NAKHREBAAZ Seller Hub</h1><p>Secure admin sign in</p><form onSubmit={async e=>{e.preventDefault();const {error}=await supabase.auth.signInWithPassword({email,password});if(error)setMessage(error.message)}}><label>Email<input type="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" required value={password} onChange={e=>setPassword(e.target.value)}/></label><button className="primary">Sign in</button>{message&&<p>{message}</p>}</form></main>;
+if(!session)return <main className="login">
+  <div className="login-panel">
+    <img className="brand-wordmark" src={brandLogo} width={900} height={331} alt="NakhreBaaz"/>
+    <h1>Seller Hub</h1>
+    <form onSubmit={async event=>{
+      event.preventDefault();
+      const {error}=await supabase.auth.signInWithPassword({email,password});
+      if (error) setMessage(error.message);
+    }}>
+      <label>Email<input type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)}/></label>
+      <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)}/></label>
+      <button className="primary">Sign in</button>
+      {message&&<p role="alert">{message}</p>}
+    </form>
+  </div>
+</main>;
 const entryNav=(key,label)=><button key={key} className={page===key?'active':''}
   aria-current={page===key?'page':undefined}
   onClick={()=>{setPage(key);selection.clear();setOpenEntryId(null);setAdding(false);setEditingEntry(null);setAttachment(null);setAdvanceTarget(null);setMessage('')}}>{label}</button>;
-return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h2><nav>
+return <div className="shell"><aside className="sidebar">
+  <div className="sidebar-brand">
+    <img className="brand-wordmark" src={brandLogo} width={900} height={331} alt="NakhreBaaz"/>
+    <span>Seller Hub</span>
+  </div>
+  <nav aria-label="Seller Hub">
   {entryNav('overview','Overview')}
   {Object.entries(schemas).filter(([key])=>key!=='materials').map(([key,entry])=>
     key==='purchases'?<details key={key} className="purchase-nav">
@@ -479,7 +500,11 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
   {entryNav('advances','Supplier Advances')}
   {entryNav('monthly','Monthly Business Report')}
   {entryNav('reports','Reports & Backup')}
-</nav><button onClick={()=>supabase.auth.signOut()}>Sign out</button><p className="aside-note">Supabase cloud workspace</p></aside><main><header><span>NAKHREBAAZ · MULTI-CHANNEL OPERATIONS</span><h1>{schemas[page]?.label|| (page==='overview'?'Overview':page==='advances'?'Supplier Advances':page==='monthly'?'Monthly Business Report':'Reports & Backup')}</h1><p>Meesho · Flipkart · Amazon · Direct</p></header>{message&&<div className="notice"><span role="status">{message}</span><button type="button" aria-label="Dismiss message" onClick={()=>setMessage('')}>×</button></div>}
+</nav><button className="sign-out" onClick={()=>supabase.auth.signOut()}>Sign out</button></aside>
+<main><header className="workspace-header">
+  <h1>{schemas[page]?.label|| (page==='overview'?'Overview':page==='advances'?'Supplier Advances':page==='monthly'?'Monthly Business Report':'Reports & Backup')}</h1>
+  <p>Meesho · Flipkart · Amazon · Direct</p>
+</header>{message&&<div className="notice"><span role="status">{message}</span><button type="button" aria-label="Dismiss message" onClick={()=>setMessage('')}>×</button></div>}
 {page==='overview'&&<>
   <div className="stats overview-stats">{[
     ['Gross Sales',rupees(gross)],
