@@ -33,6 +33,17 @@ export async function insertEntry(t,x){const {data,error}=await supabase.from(db
 
 export async function updateProduct(id,values){const {data,error}=await supabase.from('products').update(values).eq('id',id).select().single();if(error)throw error;return data;}
 
+export async function updateSavedEntry(table, original, changes, fields) {
+  const previous = toRow(table, Object.fromEntries(fields.map(key => [key, original[key]])));
+  let query = supabase.from(dbName(table)).update(toRow(table, changes)).eq('id', original.id);
+  for (const [column, value] of Object.entries(previous)) {
+    query = value == null ? query.is(column, null) : query.eq(column, value);
+  }
+  const {data, error} = await query.select().maybeSingle();
+  if (error) throw error;
+  return data ? fromRow(table, data) : null;
+}
+
 export async function deleteEntry(t,id){const table=dbName(t);const {data,error}=await supabase.from(table).delete().eq('id',id).select('id');if(error)throw error;if(!data?.length)throw Error('Delete not permitted or record not found');return data[0];}
 
 export async function updatePurchaseInvoices(table, purchase, invoiceDetails, actualPayment, supplier) {

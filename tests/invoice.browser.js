@@ -61,8 +61,8 @@ async function openPurchasePage(page, name) {
   await button.click();
 }
 
-async function useSellerApi(page, equipmentPurchases = [], sellerRole = 'admin') {
-  const db = {products:[{id:sku,sku:'PLAIN-M',name:'Plain T-Shirt',size:'M',color:'Black',type:'BLANK'}],purchases:[],material_purchases:[],equipment_purchases:equipmentPurchases,supplier_advances:[],supplier_advance_allocations:[]};
+async function useSellerApi(page, equipmentPurchases = [], sellerRole = 'admin', seed = {}) {
+  const db = {products:[{id:sku,sku:'PLAIN-M',name:'Plain T-Shirt',size:'M',color:'Black',type:'BLANK'}],purchases:[],material_purchases:[],equipment_purchases:equipmentPurchases,supplier_advances:[],supplier_advance_allocations:[],...seed};
   const uploads = [];
   const user = {id:seller,email:'seller@example.test',app_metadata:{seller_role:sellerRole},user_metadata:{}};
   const session = {access_token:'browser-test',refresh_token:'browser-test',
@@ -93,11 +93,15 @@ async function useSellerApi(page, equipmentPurchases = [], sellerRole = 'admin')
       } else list.push(row);
       return result(row,201);
     }
-    if (request.method()==='PATCH' && ['purchases','equipment_purchases'].includes(table)) {
-      const row=list.find(item=>url.searchParams.get('id')==='eq.'+item.id &&
-        url.searchParams.get('invoice_revision')==='eq.'+item.invoice_revision);
+    if (request.method()==='PATCH' && ['purchases','material_purchases','equipment_purchases','sales','returns','expenses'].includes(table)) {
+      const filters=[...url.searchParams].filter(([key])=>key!=='select');
+      const row=list.find(item=>filters.every(([key,value])=>
+        value==='is.null'?item[key]==null:value==='eq.'+item[key]));
       if (!row) return result([]);
-      Object.assign(row,payload,{invoice_revision:row.invoice_revision+1});
+      if ('invoice_revision' in row&&['invoice_details','supplier','invoice','actual_payment'].some(key=>key in payload)) {
+        row.invoice_revision++;
+      }
+      Object.assign(row,payload);
       return result([row]);
     }
     return result({message:'Unexpected browser test API call'},400);
@@ -550,7 +554,7 @@ test('exports only checked rows with durable invoice links and keeps the actions
     const {y,width,height}=button.getBoundingClientRect();
     return [y,width,height];
   }));
-  expect(geometry).toHaveLength(3);
+  expect(geometry).toHaveLength(4);
   expect(new Set(geometry.map(values=>values.join(','))).size).toBe(1);
 
   const downloading=page.waitForEvent('download');
@@ -708,4 +712,137 @@ test('reads the Amazon PaperOne invoice when the totals and product cells use di
   await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
   expect(db.material_purchases[0]).toMatchObject({qty:1,rate:406.78,actual_payment:480,
     invoice_details:[{amount:480,gst:73.22,discount:83.9}]});
+});
+
+test('edits equipment in place for a seller with a verified invoice and applied advance', async ({page}) => {
+  const invoice={kind:'Product',reference:'EQ-1',supplier:'Acme',amount:2500,gst:381.36,verified:true,path:'test/equipment.pdf'};
+  const {db,uploads}=await useSellerApi(page,[{
+    id:'equipment',name:'Printer',qty:1,rate:2000,gst_rate:18,gst_inclusive:true,supplier:'Acme',
+    invoice:'EQ-1',purchased_on:'2026-10-01',actual_payment:1500,invoice_details:[invoice],invoice_revision:0,
+    purchase_discount:0,rewards_used:0,
+  }],'seller',{
+    supplier_advances:[{id:'advance',supplier:'Acme',amount:500,paid_on:'2026-10-01'}],
+    supplier_advance_allocations:[{id:'allocation',equipment_purchase_id:'equipment',advance_id:'advance',amount:500}],
+  });
+  await openPurchasePage(page,'Machines & Equipment');
+  await page.getByRole('button',{name:'Edit',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Edit Entry'})).toBeFocused();
+  await expect(page.getByLabel('Product Name')).toHaveValue('Printer');
+  await expect(page.getByLabel('Actual payment (₹)',{exact:true})).toHaveValue('1500');
+  await page.getByLabel('Product Name').fill('Thermal Printer');
+  await page.getByLabel('Actual payment (₹)',{exact:true}).fill('2000');
+  await page.getByLabel('Date',{exact:true}).fill('2026-11-01');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByText('Entry updated',{exact:true})).toBeVisible();
+  await expect(page.getByRole('row').filter({hasText:'Thermal Printer'})).toContainText('Reconciled');
+  await expect(page.getByRole('button',{name:'View invoice EQ-1',exact:true})).toBeVisible();
+  expect(db.equipment_purchases).toHaveLength(1);
+  expect(db.equipment_purchases[0]).toMatchObject({
+    id:'equipment',name:'Thermal Printer',actual_payment:2000,purchased_on:'2026-11-01',invoice_details:[invoice],
+  });
+  expect(db.supplier_advance_allocations).toHaveLength(1);
+  expect(uploads).toEqual([]);
+  await page.getByRole('button',{name:'Overview',exact:true}).click();
+  await expect(page.getByText('Total Purchase Payments').locator('..')).toContainText('₹2,500.00');
+  await page.getByRole('button',{name:'Monthly Business Report',exact:true}).click();
+  const payments=page.getByRole('row').filter({hasText:'Equipment purchase payments'});
+  await page.getByLabel('Report Month').fill('2026-10');
+  await expect(payments).toContainText('₹0.00');
+  await page.getByLabel('Report Month').fill('2026-11');
+  await expect(payments).toContainText('₹2,000.00');
+});
+
+test('edits T-shirt and material purchases against current stock without creating new records', async ({page}) => {
+  const {db}=await useSellerApi(page,[],'seller',{
+    purchases:[{id:'shirt-buy',product_id:sku,qty:10,rate:80,gst_rate:0,gst_inclusive:false,
+      actual_payment:null,invoice_revision:0}],
+    sales:[{id:'shirt-sale',product_id:sku,qty:5}],
+    materials:[{id:'ink',name:'Ink',unit:'ml',opening_qty:0}],
+    material_purchases:[{id:'ink-buy',material_id:'ink',qty:200,rate:2.225,gst_rate:18,gst_inclusive:false,
+      invoice_revision:0}],
+    production:[{id:'run',qty:0}],
+    production_materials:[{production_id:'run',material_id:'ink',qty:100}],
+  });
+  await openPurchasePage(page,'T-Shirt Purchases');
+  await page.getByRole('button',{name:'Edit',exact:true}).click();
+  await page.getByLabel('Quantity',{exact:true}).fill('4');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByRole('alert')).toHaveText('This edit would leave insufficient product stock');
+  expect(db.purchases[0].qty).toBe(10);
+  await page.getByLabel('Quantity',{exact:true}).fill('8');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByText('Entry updated',{exact:true})).toBeVisible();
+  expect(db.purchases).toHaveLength(1);
+  expect(db.purchases[0]).toMatchObject({id:'shirt-buy',qty:8,actual_payment:null});
+  await page.getByRole('button',{name:'Overview',exact:true}).click();
+  await expect(page.getByText('Stock Units').locator('..')).toContainText('3');
+
+  await openPurchasePage(page,'Material Purchases');
+  await page.getByRole('button',{name:'Edit',exact:true}).click();
+  await expect(page.getByRole('combobox',{name:'Material',exact:true})).toHaveValue('ink');
+  await expect(page.getByLabel('Item unit price before discount (₹)')).toHaveValue('2.225');
+  await page.getByLabel('Quantity',{exact:true}).fill('99');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByRole('alert')).toHaveText('This edit would leave insufficient material stock');
+  await page.getByLabel('Quantity',{exact:true}).fill('150.125');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByText('Entry updated',{exact:true})).toBeVisible();
+  expect(db.materials).toHaveLength(1);
+  expect(db.material_purchases).toHaveLength(1);
+  expect(db.material_purchases[0]).toMatchObject({id:'ink-buy',material_id:'ink',qty:150.125});
+});
+
+test('edits a sale and a return while respecting returned quantities and sellable stock', async ({page}) => {
+  const {db}=await useSellerApi(page,[],'seller',{
+    purchases:[{id:'buy',product_id:sku,qty:8}],
+    sales:[{id:'sale',product_id:sku,order_id:'ORDER-1',qty:5,platform:'Direct',price:150,gst_rate:0,gst_inclusive:false,fee:0,shipping:0}],
+    returns:[{id:'return',sale_id:'sale',qty:2,condition:'SELLABLE',refund:300}],
+  });
+  await expect(page.getByText('Stock Units').locator('..').getByText('5',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Sales',exact:true}).click();
+  await page.getByRole('button',{name:'Edit',exact:true}).click();
+  await page.getByLabel('Quantity',{exact:true}).fill('1');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByRole('alert')).toHaveText('Return quantity exceeds the original sale quantity');
+  expect(db.sales[0].qty).toBe(5);
+  await page.getByLabel('Quantity',{exact:true}).fill('6');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByText('Entry updated',{exact:true})).toBeVisible();
+
+  await page.getByRole('button',{name:'Customer Returns',exact:true}).click();
+  await page.getByRole('button',{name:'Edit',exact:true}).click();
+  await page.getByLabel('Quantity',{exact:true}).fill('7');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByRole('alert')).toHaveText('Return quantity exceeds the original sale quantity');
+  await page.getByLabel('Quantity',{exact:true}).fill('2');
+  await page.getByRole('combobox',{name:'Condition',exact:true}).selectOption('DAMAGED');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByText('Entry updated',{exact:true})).toBeVisible();
+  expect(db.sales).toHaveLength(1);
+  expect(db.sales[0]).toMatchObject({id:'sale',qty:6});
+  expect(db.returns).toHaveLength(1);
+  expect(db.returns[0]).toMatchObject({id:'return',sale_id:'sale',condition:'DAMAGED',qty:2});
+  await page.getByRole('button',{name:'Overview',exact:true}).click();
+  await expect(page.getByText('Stock Units').locator('..').getByText('2',{exact:true})).toBeVisible();
+});
+
+test('keeps another edit to a saved expense and preserves a blank date', async ({page}) => {
+  const {db}=await useSellerApi(page,[],'seller',{
+    expenses:[{id:'expense',category:'Transport',description:null,amount:100,spent_on:null}],
+  });
+  await page.getByRole('button',{name:'Expenses',exact:true}).click();
+  const edit=page.getByRole('button',{name:'Edit',exact:true});
+  await edit.click();
+  await expect(page.getByLabel('Date',{exact:true})).toHaveValue('');
+  db.expenses[0].description='Courier';
+  await page.getByLabel('Amount',{exact:true}).fill('125');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByRole('alert')).toHaveText('This entry changed or was removed. Reopen it before saving.');
+  expect(db.expenses[0].amount).toBe(100);
+  await edit.click();
+  await expect(page.getByLabel('Description',{exact:true})).toHaveValue('Courier');
+  await page.getByLabel('Amount',{exact:true}).fill('125');
+  await page.getByRole('button',{name:'Save Changes'}).click();
+  await expect(page.getByText('Entry updated',{exact:true})).toBeVisible();
+  expect(db.expenses).toEqual([{id:'expense',category:'Transport',description:'Courier',amount:125,spent_on:null}]);
 });
