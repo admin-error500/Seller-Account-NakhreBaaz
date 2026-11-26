@@ -66,10 +66,8 @@ button.primary:disabled {opacity: .62; cursor: not-allowed}
 }
 .brand-wordmark {
   display: block;
-  width: 100%;
+  max-width: 100%;
   height: auto;
-  /* Show the wordmark and smile from the supplied design. */
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 55.5% 100%, 55.5% 65%, 47% 65%, 36% 66.9%, 0 67.6%);
 }
 .sidebar-brand span {
   font-size: 10px;
@@ -185,7 +183,7 @@ td {color: var(--ink)}
   background: var(--surface);
   box-shadow: 0 18px 42px #100a0542;
 }
-.login-panel .brand-wordmark {max-width: 270px; margin-inline: auto}
+.login-panel .brand-wordmark {margin-inline: auto}
 .login-panel h1 {margin: 12px 0 22px; text-align: center; font-size: 24px}
 .login-panel form {display: grid; gap: 16px; padding: 0; border: 0; box-shadow: none}
 .login-panel button {margin: 4px 0 0; min-height: 44px}
@@ -204,7 +202,7 @@ td {color: var(--ink)}
     gap: 10px;
     padding: 12px 16px;
   }
-  .sidebar-brand {width: min(100%, 144px); margin: 0; gap: 3px; padding: 6px 9px}
+  .sidebar-brand {width: min(100%, 160px); margin: 0; gap: 3px; padding: 6px 9px}
   .sidebar-brand span {font-size: 9px}
   .sidebar .sign-out {grid-column: 2; grid-row: 1; min-height: 44px}
   .sidebar nav {

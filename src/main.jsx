@@ -11,7 +11,7 @@ import {affectsStock, availableMaterials, entryChanges, entryFormValues, product
 import React,{useState,useMemo,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Eye, FilePlus, FileCheck, Upload, Pencil, Wallet, Trash2, Boxes} from 'lucide-react';
-import brandLogo from './assets/nakhrebaaz-logo.webp';
+import brandLogo from './assets/nakhrebaaz-wordmark.png';
 import './style.css';
 import {supabase,configured,fetchAll,insertEntry,updateProduct,updateSavedEntry,deleteEntry,updatePurchaseInvoices,fromRow,findPurchase,insertPurchase} from './supabase';
 const sizes=['14','16','18','20','22','24','26','28','30','32','34','36','38','40','42','44','46','48','S','M','L','XL','XXL','3XL'];
@@ -37,6 +37,10 @@ const fieldLabels={openingQty:'Opening Quantity',gstRate:'GST Rate (%)',gstInclu
 const fieldLabel=k=>fieldLabels[k]||k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase());
 const today=()=>new Date().toISOString().slice(0,10);
 const rupees=(n,maxFractionDigits=2)=>'₹'+(Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:maxFractionDigits});
+function BrandWordmark() {
+  return <img className="brand-wordmark" src={brandLogo} width={190} height={72} alt="NakhreBaaz"/>;
+}
+
 function InvoiceStatus({row}) {
   const invoices=row.invoiceDetails??[];
   const {status,hasActualPayment}=purchaseDetails(row);
@@ -468,7 +472,7 @@ if(loading)return <main><h1>Loading Seller Hub...</h1></main>;
 if(!configured)return <main><h1>Supabase configuration required</h1><p>Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in Vercel project environment variables.</p></main>;
 if(!session)return <main className="login">
   <div className="login-panel">
-    <img className="brand-wordmark" src={brandLogo} width={900} height={331} alt="NakhreBaaz"/>
+    <BrandWordmark/>
     <h1>Seller Hub</h1>
     <form onSubmit={async event=>{
       event.preventDefault();
@@ -487,7 +491,7 @@ const entryNav=(key,label)=><button key={key} className={page===key?'active':''}
   onClick={()=>{setPage(key);selection.clear();setOpenEntryId(null);setAdding(false);setEditingEntry(null);setAttachment(null);setAdvanceTarget(null);setMessage('')}}>{label}</button>;
 return <div className="shell"><aside className="sidebar">
   <div className="sidebar-brand">
-    <img className="brand-wordmark" src={brandLogo} width={900} height={331} alt="NakhreBaaz"/>
+    <BrandWordmark/>
     <span>Seller Hub</span>
   </div>
   <nav aria-label="Seller Hub">
