@@ -87,3 +87,8 @@
 .record-table .entry-name{display:inline;padding:0;border:0;background:transparent;color:#183d70;font:inherit;font-weight:600;text-align:left;white-space:normal;overflow-wrap:anywhere;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 .record-table .entry-name:hover{color:#0e274b}
 .record-table .entry-name:focus-visible{outline:2px solid #376aa0;outline-offset:3px;border-radius:2px}
+
+.invoice-reading{display:inline-flex;align-items:center;gap:8px}
+.invoice-spinner{width:15px;height:15px;border:2px solid #cdd9e7;border-top-color:#1f518c;border-radius:50%;animation:invoice-spin .7s linear infinite}
+@keyframes invoice-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.invoice-spinner{animation:none}}

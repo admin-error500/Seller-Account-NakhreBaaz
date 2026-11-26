@@ -170,7 +170,10 @@ for (const format of ['png','jpeg','scanned pdf','hybrid pdf']) {
         ['A long incomplete PDF text layer can contain plenty of irrelevant content and no useful invoice fields.']:[],image)}
       : {name:`invoice.${format}`,mimeType:imageType,buffer:image};
     await page.getByLabel('Invoice file').setInputFiles(file);
+    await expect(page.locator('.invoice-spinner')).toBeVisible();
+    await expect(page.getByRole('status')).toHaveText('Reading invoice…');
     await expect(page.getByRole('status')).toHaveText('Review the extracted fields before saving.',{timeout:30000});
+    await expect(page.locator('.invoice-spinner')).toHaveCount(0);
     await expect(page.getByLabel('Invoice supplier')).toHaveValue('Example Textiles');
     await expect(page.getByLabel('Invoice number',{exact:true}).last()).toHaveValue('FK-0042');
     await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('7442');
@@ -651,4 +654,27 @@ test('fills the existing fields for the split-tax equipment invoice', async ({pa
   await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
   expect(db.equipment_purchases[0]).toMatchObject({qty:1,rate:10000,actual_payment:11800,
     invoice_details:[{amount:11800,gst:1800}]});
+});
+
+test('fills and saves Amazon totals from the summary when item tax rows wrap', async ({page}) => {
+  const {db}=await useSellerApi(page,[{
+    id:'1',name:'Consumable',supplier:'Example Seller',actual_payment:590,invoice_revision:0,invoice_details:[],
+  }]);
+  await openPurchasePage(page,'Machines & Equipment');
+  await page.getByRole('button',{name:'Add invoices',exact:true}).click();
+  const lines=[
+    'Amazon Tax Invoice','Sold By: Example Seller','Invoice Number: SPLIT-1','Order Number: 402-1234567-1123456',
+    'Description Unit Price Quantity Net Amount', 'Tax Rate Tax Type Tax Amount Total Amount',
+    '1 Printer Consumable','INR 500.00 1 INR 500.00 9% CGST INR 45.00',
+    '9% SGST INR 45.00 INR 590.00','TOTAL: INR 90.00 INR 590.00',
+  ];
+  await page.getByLabel('Invoice file').setInputFiles({
+    name:'split.pdf',mimeType:'application/pdf',buffer:makePdf(lines),
+  });
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('590');
+  await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('90');
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save reconciliation'}).click();
+  await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
+  expect(db.equipment_purchases[0].invoice_details[0]).toMatchObject({amount:590,gst:90,reference:'SPLIT-1'});
 });

@@ -88,7 +88,8 @@ export default function PurchaseInvoices({lines, setLines, onApply, onExtract, s
           step={key === 'quantity' ? 'any' : '0.01'} value={line[key] ?? ''}
           onChange={event => change(line.id, {[key]: event.target.value})}/></label>)}
       {(line.notice||(line.needsReview&&missingInvoiceFields(line).length>0))&&
-        <small className="invoice-notice" role="status">
+        <small className={line.reading?'invoice-notice invoice-reading':'invoice-notice'} role="status">
+          {line.reading&&<span className="invoice-spinner" aria-hidden="true"/>}
           {line.notice}{line.notice&&line.needsReview?' ':''}
           {line.needsReview&&missingInvoiceFields(line).length>0&&
             `Enter these details from the attached document: ${missingInvoiceFields(line).join(', ')}.`}
