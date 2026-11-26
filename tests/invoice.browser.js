@@ -664,7 +664,7 @@ test('fills and saves Amazon totals from the summary when item tax rows wrap', a
   await page.getByRole('button',{name:'Add invoices',exact:true}).click();
   const lines=[
     'Amazon Tax Invoice','Sold By: Example Seller','Invoice Number: SPLIT-1','Order Number: 402-1234567-1123456',
-    'Description Unit Price Quantity Net Amount Tax Rate Tax Type Tax Amount Total Amount',
+    'Description Unit Price Quantity Net Amount', 'Tax Rate Tax Type Tax Amount Total Amount',
     '1 Printer Consumable','INR 500.00 1 INR 500.00 9% CGST INR 45.00',
     '9% SGST INR 45.00 INR 590.00','TOTAL: INR 90.00 INR 590.00',
   ];
