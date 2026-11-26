@@ -10,8 +10,8 @@ const sample = [
   'Grand Total: 7442.00',
 ];
 
-function makePdf(lines, jpeg) {
-  const text = lines.length ? 'BT /F1 16 Tf '+(jpeg?'3 Tr ':'')+'28 340 Td '
+function makePdf(lines, jpeg, fontSize=16) {
+  const text = lines.length ? 'BT /F1 '+fontSize+' Tf '+(jpeg?'3 Tr ':'')+'28 340 Td '
     + lines.map(line => `(${line}) Tj`).join(' 0 -26 Td ')+' ET' : '';
   const content = jpeg ? 'q 600 0 0 370 0 0 cm /Im Do Q '+text : text;
   const resources = jpeg ? '/XObject << /Im 5 0 R >>'+(lines.length?' /Font << /F1 6 0 R >>':'') : '/Font << /F1 5 0 R >>';
@@ -638,7 +638,7 @@ test('fills the existing fields for the split-tax equipment invoice', async ({pa
       'Sl Description of Goods HSN/SAC Quantity Rate per Disc. % Amount Taxable CGST SGST/UTGST Total',
       '1 Heat Press Machine 84624900 1 pcs 10000.00 pcs 10000.00 10000.00 9% 900.00 9% 900.00 11800.00',
       'Total 1 pcs INR 11800.00 10000.00 900.00 900.00',
-    ]),
+    ],undefined,10),
   };
   await page.getByLabel('Invoice file').setInputFiles(file);
   await expect(page.getByLabel('Invoice supplier',{exact:true})).toHaveValue(process.env.SELLER_TEST_SPLIT_TAX_PDF
