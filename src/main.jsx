@@ -7,11 +7,12 @@ import {isAddressHeading} from './invoiceParser.js';
 import PurchaseInvoices from './PurchaseInvoices.jsx';
 import {purchasePages, purchaseDetails, purchaseTotals, parseMoney, taxDetails, number, money, normalizeInvoiceKey} from './purchaseReconciliation.js';
 import {prepareInvoices, uploadInvoices, discardInvoiceUploads, invoiceSaveError, isDefinitiveWriteError} from './purchaseInvoiceStorage.js';
+import {affectsStock, availableMaterials, entryChanges, entryFormValues, productStock, purchaseAmounts, purchasePaymentFields, validateStockEdit} from './entryEdits.js';
 import React,{useState,useMemo,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Eye, FilePlus, FileCheck, Upload, Pencil, Wallet, Trash2, Boxes} from 'lucide-react';
 import './style.css';
-import {supabase,configured,fetchAll,insertEntry,updateProduct,deleteEntry,updatePurchaseInvoices,fromRow,findPurchase,insertPurchase} from './supabase';
+import {supabase,configured,fetchAll,insertEntry,updateProduct,updateSavedEntry,deleteEntry,updatePurchaseInvoices,fromRow,findPurchase,insertPurchase} from './supabase';
 const sizes=['14','16','18','20','22','24','26','28','30','32','34','36','38','40','42','44','46','48','S','M','L','XL','XXL','3XL'];
 const channels=['Meesho','Flipkart','Amazon','Direct','Other'];
 
@@ -28,6 +29,9 @@ expenses:{label:'Expenses',fields:{category:'text',description:'text',amount:'nu
 equipmentPurchases:{label:'Machines & Equipment',fields:{name:'text',qty:'number',rate:'number',gstRate:[0,3,5,12,18,28,40],gstInclusive:['No','Yes'],supplier:'text',invoice:'text',date:'date'}},
 settlements:{label:'Settlements',fields:{platform:channels,reference:'text',amount:'number',date:'date'}}
 };
+const {materialName,materialCategory,materialUnit,...materialPurchaseFields}=schemas.materialPurchases.fields;
+const editMaterialFields={materialId:'material',...materialPurchaseFields};
+const optionalFields=['supplier','invoice','fee','shipping','refund','electricity','otherCost','date','openingQty'];
 const fieldLabels={openingQty:'Opening Quantity',gstRate:'GST Rate (%)',gstInclusive:'GST included in unit price?',productId:'Product',qty:'Quantity',rate:'Unit Price (₹)',supplier:'Supplier Name',invoice:'Invoice Number',date:'Date',sku:'SKU',name:'Product Name',size:'Size',color:'Color',type:'Product Type',platform:'Marketplace',orderId:'Order ID',price:'Selling Price (₹)',fee:'Marketplace Fee (₹)',shipping:'Shipping Cost (₹)',materialName:'Material Name',materialCategory:'Category',materialUnit:'Unit',materialId:'Material',saleId:'Original Sale',refund:'Refund (₹)',electricity:'Electricity Cost (₹)',otherCost:'Other Cost (₹)',blankId:'Blank T-Shirt',printedId:'Printed T-Shirt'};
 const fieldLabel=k=>fieldLabels[k]||k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase());
 const today=()=>new Date().toISOString().slice(0,10);
@@ -101,6 +105,9 @@ const [invoiceLines,setInvoiceLines]=useState([]);
 const [attachment,setAttachment]=useState(null);
 const [openEntryId,setOpenEntryId]=useState(null);
 const [entryError,setEntryError]=useState('');
+const [editingEntry,setEditingEntry]=useState(null);
+const [editError,setEditError]=useState('');
+const editHeading=useRef(null);
 const [advanceTarget,setAdvanceTarget]=useState(null);
 const purchaseDraftId=useRef(null);
 const attachmentForm=useRef(null);const [editingProduct,setEditingProduct]=useState(null),[adjustingProduct,setAdjustingProduct]=useState(null),[adjustQty,setAdjustQty]=useState(''),[adjustReason,setAdjustReason]=useState('Stock count correction'),[reportMonth,setReportMonth]=useState(today().slice(0,7)),[saving,setSaving]=useState(false),[data,setData]=useState(initial),[session,setSession]=useState(null),[loading,setLoading]=useState(true),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[page,setPage]=useState('overview'),[form,setForm]=useState({}),[adding,setAdding]=useState(false),[message,setMessage]=useState('');
@@ -133,10 +140,10 @@ const isAdmin=session?.user?.app_metadata?.seller_role==='admin';
 async function removeRecord(t,row){if(!isAdmin){setMessage('Only admin can delete entries');return;}const label=t==='products'?productName(row.id):t==='sales'?row.orderId:t==='materials'?row.name:row.name||row.invoice||row.id;const yes=window.confirm('Permanently delete '+label+'? This may change stock and monthly reports. This cannot be undone.');if(!yes)return;setSaving(true);try{await deleteEntry(t,row.id);save(await fetchAll());setMessage('Entry deleted successfully')}catch(err){setMessage('Delete failed: '+err.message+'. Delete dependent records first if applicable.')}finally{setSaving(false)}}
 const product=id=>data.products.find(p=>p.id===id);
 const productName=id=>{const p=product(id);return p? [p.name,p.size,p.color,p.type].join(' / '):'Unknown product'};
-const stock=useMemo(()=>{const s=Object.fromEntries(data.products.map(p=>[p.id,0]));for(const a of data.stockAdjustments)s[a.productId]=(s[a.productId]||0)+number(a.qtyChange);for(const p of data.purchases)s[p.productId]=(s[p.productId]||0)+number(p.qty);for(const p of data.sales)s[p.productId]=(s[p.productId]||0)-number(p.qty);for(const p of data.returns)if(p.condition==='SELLABLE')s[p.productId]=(s[p.productId]||0)+number(p.qty);for(const p of data.production){s[p.blankId]=(s[p.blankId]||0)-number(p.qty);s[p.printedId]=(s[p.printedId]||0)+number(p.qty)}return s},[data]);
+const stock=useMemo(()=>productStock(data),[data]);
 async function submitProductEdit(e){e.preventDefault();setSaving(true);try{const sku=editingProduct.sku.trim();if(!sku)throw Error('SKU required');if(data.products.some(p=>p.id!==editingProduct.id&&p.sku===sku))throw Error('SKU already exists');await updateProduct(editingProduct.id,{sku,name:editingProduct.name.trim(),size:editingProduct.size,color:editingProduct.color.trim(),type:editingProduct.type});save(await fetchAll());setEditingProduct(null);setMessage('Product updated')}catch(err){setMessage(err.message)}finally{setSaving(false)}}
 async function submitStockAdjustment(e){e.preventDefault();setSaving(true);try{const desired=Number(adjustQty);if(!Number.isFinite(desired)||desired<0||!Number.isInteger(desired))throw Error('Enter a valid non-negative whole quantity');const delta=desired-number(stock[adjustingProduct.id]);if(!delta)throw Error('Stock is already at that quantity');await insertEntry('stockAdjustments',{productId:adjustingProduct.id,qtyChange:delta,reason:adjustReason,date:today()});save(await fetchAll());setAdjustingProduct(null);setAdjustQty('');setMessage('Stock adjustment saved with history')}catch(err){setMessage(err.message)}finally{setSaving(false)}}
-const materialStock=useMemo(()=>{const s=Object.fromEntries(data.materials.map(p=>[p.id,number(p.openingQty)]));for(const p of data.materialPurchases)s[p.materialId]=(s[p.materialId]||0)+number(p.qty);for(const p of data.production)for(const c of p.consumption||[])s[c.materialId]=(s[c.materialId]||0)-number(c.qty);return s},[data]);
+const materialStock=useMemo(()=>availableMaterials(data),[data]);
 const platformSales=Object.fromEntries(channels.map(channel=>[channel,0]));
 for (const sale of data.sales) {
   const channel=channels.includes(sale.platform)?sale.platform:'Other';
@@ -148,6 +155,9 @@ const options=(kind)=>kind==='product'?data.products:kind==='blank'?data.product
 const fields=schemas[page]?.fields;
 const isTaxPage=['purchases','sales','materialPurchases','equipmentPurchases'].includes(page);
 const isPurchase=purchasePages.includes(page);
+const canEditEntry=isPurchase||['sales','returns','expenses'].includes(page);
+const editableFields=page==='materialPurchases'?editMaterialFields:fields;
+const formFields=editingEntry?editableFields:fields;
 const previewInvoices=invoiceLines.filter(line=>line.amount!==''&&line.amount!=null&&line.gst!==''&&line.gst!=null)
   .map(line=>({...line,verified:true}));
 const purchasePreview=isPurchase?purchaseDetails({...form,invoiceDetails:previewInvoices}):null;
@@ -165,6 +175,7 @@ const addAdvanceRecord=(key,row)=>setData(previous=>({...previous,
   [key]:[...previous[key].filter(entry=>entry.id!==row.id),row]}));
 const openAdvance=row=>{
   setAdding(false);
+  setEditingEntry(null);
   setAttachment(null);
   setAdvanceTarget(row);
   setMessage('');
@@ -173,6 +184,9 @@ const attachmentOpen=attachment?.page===page&&!adding;
 React.useEffect(()=>{
   if (attachmentOpen) attachmentForm.current?.scrollIntoView({block:'nearest'});
 },[attachmentOpen,attachment?.row.id]);
+React.useEffect(()=>{
+  if (editingEntry) editHeading.current?.focus();
+},[editingEntry]);
 const taxPreview=isTaxPage?taxDetails(form.qty,form[page==='sales'?'price':'rate'],form.gstRate,form.gstInclusive==='Yes'):null;
 const monthly=(items)=>items.filter(x=>String(x.date||'').slice(0,7)===reportMonth);
 const mSales=monthly(data.sales),mPurchases=monthly(purchaseRecords.purchases),mMaterials=monthly(purchaseRecords.materialPurchases),mEquipment=monthly(purchaseRecords.equipmentPurchases),mReturns=monthly(data.returns),mExpenses=monthly(data.expenses),mSettlements=monthly(data.settlements),mProduction=monthly(data.production);
@@ -224,6 +238,7 @@ function applyInvoice(line, automatic=false) {
 
 function openAttachment(row, legacyIndex, supplierOnly=false) {
   setAdvanceTarget(null);
+  setEditingEntry(null);
   const existing=legacyIndex==null?null:legacyIndex===-1
     ? {kind:'Product',reference:row.invoice,path:row.invoicePath}
     : row.invoiceDetails[legacyIndex];
@@ -271,6 +286,55 @@ async function submitAttachment(event) {
       try { save(await fetchAll()); } catch { /* Keep the original conflict message. */ }
     }
     setMessage(invoiceSaveError(error));
+  } finally {
+    setSaving(false);
+  }
+}
+
+function openEditor(row) {
+  const keys=Object.keys(editableFields);
+  if (isPurchase) keys.push(...Object.keys(purchasePaymentFields));
+  const values=entryFormValues(row,keys);
+  setEditingEntry({row,values});
+  setForm(values);
+  setAdding(false);
+  setAttachment(null);
+  setAdvanceTarget(null);
+  setInvoiceLines([]);
+  setEditError('');
+  setMessage('');
+}
+
+async function submitEdit(event) {
+  event.preventDefault();
+  if (saving) return;
+  setSaving(true);
+  setEditError('');
+  try {
+    const {row,values}=editingEntry;
+    const changes=entryChanges(values,form,editableFields);
+    if (!Object.keys(changes).length) {
+      setEditingEntry(null);
+      return;
+    }
+    const checkStock=affectsStock(page,changes);
+    const current=checkStock?await fetchAll():null;
+    if (current) {
+      save(current);
+      validateStockEdit(page,current,row.id,changes);
+    }
+    const comparedFields=Object.keys(values);
+    if (isPurchase) comparedFields.push('invoiceRevision');
+    const updated=await updateSavedEntry(page,row,changes,comparedFields);
+    if (!updated) {
+      if (!current) save(await fetchAll());
+      throw Error('This entry changed or was removed. Reopen it before saving.');
+    }
+    setData(previous=>({...previous,[page]:previous[page].map(entry=>entry.id===updated.id?updated:entry)}));
+    setEditingEntry(null);
+    setMessage('Entry updated');
+  } catch (error) {
+    setEditError(invoiceSaveError(error));
   } finally {
     setSaving(false);
   }
@@ -361,7 +425,7 @@ const entryColumnClass=key=>{
   if (fields[key]==='number'||key==='gstRate') return 'entry-number';
   if (['name','supplier','description','productId','blankId','printedId'].includes(key)) return 'entry-text';
 };
-const hasEntryActions=isPurchase||isAdmin||page==='products';
+const hasEntryActions=canEditEntry||isAdmin||page==='products';
 const primaryEntryField=({products:'name',sales:'orderId',expenses:'description',settlements:'reference',
   materialPurchases:'materialId'})[page]??visibleFields[0];
 const entryColumnCount=visibleFields.length+1+Number(hasEntryActions)+Number(page==='materialPurchases')+
@@ -404,7 +468,7 @@ if(!configured)return <main><h1>Supabase configuration required</h1><p>Set VITE_
 if(!session)return <main className="login"><h1>NAKHREBAAZ Seller Hub</h1><p>Secure admin sign in</p><form onSubmit={async e=>{e.preventDefault();const {error}=await supabase.auth.signInWithPassword({email,password});if(error)setMessage(error.message)}}><label>Email<input type="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" required value={password} onChange={e=>setPassword(e.target.value)}/></label><button className="primary">Sign in</button>{message&&<p>{message}</p>}</form></main>;
 const entryNav=(key,label)=><button key={key} className={page===key?'active':''}
   aria-current={page===key?'page':undefined}
-  onClick={()=>{setPage(key);selection.clear();setOpenEntryId(null);setAdding(false);setAttachment(null);setAdvanceTarget(null);setMessage('')}}>{label}</button>;
+  onClick={()=>{setPage(key);selection.clear();setOpenEntryId(null);setAdding(false);setEditingEntry(null);setAttachment(null);setAdvanceTarget(null);setMessage('')}}>{label}</button>;
 return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h2><nav>
   {entryNav('overview','Overview')}
   {Object.entries(schemas).filter(([key])=>key!=='materials').map(([key,entry])=>
@@ -437,29 +501,100 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
     {!data.products.length&&<p>No products yet.</p>}
   </section>
 </>}
-{page==='products'&&editingProduct&&<form className="entry-form" onSubmit={submitProductEdit}><h2>Edit Product</h2><div className="fields">{Object.entries(schemas.products.fields).map(([k,t])=><label key={k}>{fieldLabel(k)}{Array.isArray(t)?<select required value={editingProduct[k]} onChange={e=>setEditingProduct({...editingProduct,[k]:e.target.value})}>{t.map(v=><option key={v} value={v}>{v}</option>)}</select>:<input required value={editingProduct[k]??''} onChange={e=>setEditingProduct({...editingProduct,[k]:e.target.value})}/>}</label>)}</div><div className="form-actions"><button className="primary" disabled={saving}>Save Changes</button><button type="button" onClick={()=>setEditingProduct(null)}>Cancel</button></div></form>}{page==='products'&&adjustingProduct&&<form className="entry-form" onSubmit={submitStockAdjustment}><h2>Adjust Stock — {productName(adjustingProduct.id)}</h2><p>Current stock: <strong>{number(stock[adjustingProduct.id])}</strong> units. Enter the correct total stock. A signed adjustment is recorded; purchases and sales are not overwritten.</p><div className="fields"><label>Correct Stock Quantity<input required type="number" min="0" step="1" value={adjustQty} onChange={e=>setAdjustQty(e.target.value)}/></label><label>Reason<select required value={adjustReason} onChange={e=>setAdjustReason(e.target.value)}>{['Stock count correction','Opening stock','Damaged stock','Lost stock','Other adjustment'].map(x=><option key={x}>{x}</option>)}</select></label></div><div className="form-actions"><button className="primary" disabled={saving}>Save Stock Adjustment</button><button type="button" onClick={()=>setAdjustingProduct(null)}>Cancel</button></div></form>}{fields&&<><div className="toolbar entry-add-toolbar"><p>Manage records for {schemas[page].label}.</p><button className="primary" onClick={()=>{setAdding(!adding);setAdvanceTarget(null);purchaseDraftId.current=null;setAttachment(null);setForm({});setInvoiceLines([])}}>+ Add Entry</button></div>{adding&&<form className="entry-form" onSubmit={submit}><div className="form-heading"><h2>{page==='purchases'?'Add T-Shirt Purchase':page==='materialPurchases'?'Add Material Purchase':'New Entry'}</h2><p>Fill in the details below to save your record.</p></div><div className="fields">{Object.entries(fields).map(([k,t])=><label className={page==='materials'&&k==='unit'?'material-unit-field':page==='materials'&&k==='openingQty'?'material-qty-field':undefined} key={k}>{purchaseFieldLabel(k)} {Array.isArray(t)?<select required value={form[k]??''} onChange={e=>setForm({...form,[k]:e.target.value})}><option value="">Select</option>{t.map(v=><option key={v} value={v}>{v}</option>)}</select>:['product','blank','printed','material','sale'].includes(t)?<select required value={form[k]||''} onChange={e=>setForm({...form,[k]:e.target.value})}><option value="">{t==='product'?'Choose a product':'Choose an option'}</option>{options(t).map(x=><option value={x.id} key={x.id}>{t==='material'?x.name:t==='sale'?x.orderId:productName(x.id)+(product(x.id)?.sku?' · '+product(x.id).sku:'')}</option>)}</select>:<input required={!['supplier','invoice','fee','shipping','refund','electricity','otherCost','date','openingQty'].includes(k)} type={t==='number'?'number':t==='date'?'date':'text'} min={t==='number'?'0':undefined} step={t==='number'?(page==='materialPurchases'&&k==='rate'?'any':'0.01'):undefined} value={form[k]??(t==='date'?today():'')} onChange={e=>setForm({...form,[k]:e.target.value})}/>}</label>)}{isPurchase&&<>
-  <div className="tax-summary purchase-payment"><strong>Purchase payment</strong>
-    <div className="fields">{[['actualPayment','Actual payment (₹)'],['purchasePlatform','Purchase platform'],['purchaseOrderId','Order ID'],['purchaseDiscount','Purchase discount (₹)'],['rewardsUsed','Rewards redeemed (₹)']].map(([key,label])=>{
-      const isAmount=['actualPayment','purchaseDiscount','rewardsUsed'].includes(key);
-      return <label key={key}>{label}<input required={key==='actualPayment'} type={isAmount?'number':'text'}
-        min={isAmount?0:undefined} step={isAmount?'0.01':undefined}
-        value={form[key]??''} onChange={event=>setForm({...form,[key]:event.target.value})}/></label>;
-    })}</div>
-    <small>Enter the amount paid directly for this purchase after discounts or rewards. Apply any previously recorded advance from Actions after saving.</small>
+{page==='products'&&editingProduct&&<form className="entry-form" onSubmit={submitProductEdit}><h2>Edit Product</h2><div className="fields">{Object.entries(schemas.products.fields).map(([k,t])=><label key={k}>{fieldLabel(k)}{Array.isArray(t)?<select required value={editingProduct[k]} onChange={e=>setEditingProduct({...editingProduct,[k]:e.target.value})}>{t.map(v=><option key={v} value={v}>{v}</option>)}</select>:<input required value={editingProduct[k]??''} onChange={e=>setEditingProduct({...editingProduct,[k]:e.target.value})}/>}</label>)}</div><div className="form-actions"><button className="primary" disabled={saving}>Save Changes</button><button type="button" onClick={()=>setEditingProduct(null)}>Cancel</button></div></form>}{page==='products'&&adjustingProduct&&<form className="entry-form" onSubmit={submitStockAdjustment}><h2>Adjust Stock — {productName(adjustingProduct.id)}</h2><p>Current stock: <strong>{number(stock[adjustingProduct.id])}</strong> units. Enter the correct total stock. A signed adjustment is recorded; purchases and sales are not overwritten.</p><div className="fields"><label>Correct Stock Quantity<input required type="number" min="0" step="1" value={adjustQty} onChange={e=>setAdjustQty(e.target.value)}/></label><label>Reason<select required value={adjustReason} onChange={e=>setAdjustReason(e.target.value)}>{['Stock count correction','Opening stock','Damaged stock','Lost stock','Other adjustment'].map(x=><option key={x}>{x}</option>)}</select></label></div><div className="form-actions"><button className="primary" disabled={saving}>Save Stock Adjustment</button><button type="button" onClick={()=>setAdjustingProduct(null)}>Cancel</button></div></form>}{fields&&<>
+<div className="toolbar entry-add-toolbar">
+  <p>Manage records for {schemas[page].label}.</p>
+  <button className="primary" disabled={saving} onClick={()=>{
+    setAdding(!adding);
+    setEditingEntry(null);
+    setAdvanceTarget(null);
+    purchaseDraftId.current=null;
+    setAttachment(null);
+    setForm({});
+    setInvoiceLines([]);
+  }}>+ Add Entry</button>
+</div>
+{(adding||editingEntry)&&<form className="entry-form" onSubmit={editingEntry?submitEdit:submit}>
+  <div className="form-heading">
+    {editingEntry?<h2 ref={editHeading} tabIndex={-1}>Edit Entry</h2>:<>
+      <h2>{page==='purchases'?'Add T-Shirt Purchase':page==='materialPurchases'?'Add Material Purchase':'New Entry'}</h2>
+      <p>Fill in the details below to save your record.</p>
+    </>}
   </div>
-  <PurchaseInvoices lines={invoiceLines} setLines={setInvoiceLines} onApply={applyInvoice}
-    onExtract={line=>applyInvoice(line,true)} saving={saving} viewInvoice={viewInvoice}/>
-  <div className="tax-summary" aria-label="Purchase cost summary">
-    <strong>Purchase cost summary</strong>
-    <div><span>Item invoices after discounts</span><b>{rupees(purchasePreview.invoiceTotal-feeInvoiceTotal)}</b></div>
-    <div><span>Fee invoices</span><b>{rupees(feeInvoiceTotal)}</b></div>
-    <div className="tax-total"><span>Received invoice total</span><b>{rupees(purchasePreview.invoiceTotal)}</b></div>
-    <div><span>Actual payment</span><b>{purchasePreview.hasActualPayment?rupees(purchasePreview.paid):'Not entered'}</b></div>
-    <div><span>Documented GST (included in invoice total)</span><b>{rupees(purchasePreview.tax)}</b></div>
-    {purchasePreview.hasActualPayment&&<div><span>{purchasePreview.status}</span>
-      <b>{rupees(purchasePreview.mismatch||purchasePreview.pending)}</b></div>}
+  <div className="fields">
+    {Object.entries(formFields).map(([key,type])=>{
+      const value=form[key]??'';
+      const onChange=event=>setForm({...form,[key]:event.target.value});
+      const fieldClass=page==='materials'&&({unit:'material-unit-field',openingQty:'material-qty-field'})[key];
+      const optional=optionalFields.includes(key)||(editingEntry&&key==='description');
+      const requiredDate=editingEntry&&page==='equipmentPurchases'&&key==='date';
+      const decimalStep=editingEntry||(page==='materialPurchases'&&key==='rate')?'any':'0.01';
+      return <label key={key} className={fieldClass||undefined}>{purchaseFieldLabel(key)}
+        {Array.isArray(type)?<select required value={value} onChange={onChange}>
+          <option value="">Select</option>
+          {editingEntry&&value&&!type.some(option=>String(option)===value)&&<option>{value}</option>}
+          {type.map(option=><option key={option} value={option}>{option}</option>)}
+        </select>:['product','blank','printed','material','sale'].includes(type)?
+          <select required value={value} onChange={onChange}>
+            <option value="">{type==='product'?'Choose a product':'Choose an option'}</option>
+            {options(type).map(item=><option value={item.id} key={item.id}>
+              {type==='material'?`${item.name} (${item.unit})`:type==='sale'?item.orderId:
+                productName(item.id)+(item.sku?' · '+item.sku:'')}
+            </option>)}
+          </select>:
+          <input required={!optional||Boolean(requiredDate)} type={type}
+            min={type==='number'?0:undefined} step={type==='number'?decimalStep:undefined}
+            value={form[key]??(type==='date'&&!editingEntry?today():'')} onChange={onChange}/>}
+      </label>;
+    })}
+    {isPurchase&&<>
+      <div className="tax-summary purchase-payment"><strong>Purchase payment</strong>
+        <div className="fields">{Object.entries(purchasePaymentFields).map(([key,label])=>{
+          const isAmount=purchaseAmounts.includes(key);
+          return <label key={key}>{label}<input required={key==='actualPayment'&&!editingEntry} type={isAmount?'number':'text'}
+            min={isAmount?0:undefined} step={isAmount?'0.01':undefined}
+            value={form[key]??''} onChange={event=>setForm({...form,[key]:event.target.value})}/></label>;
+        })}</div>
+        <small>Enter the amount paid directly for this purchase after discounts or rewards. Apply any previously recorded advance from Actions after saving.</small>
+      </div>
+      {!editingEntry&&<>
+        <PurchaseInvoices lines={invoiceLines} setLines={setInvoiceLines} onApply={applyInvoice}
+          onExtract={line=>applyInvoice(line,true)} saving={saving} viewInvoice={viewInvoice}/>
+        <div className="tax-summary" aria-label="Purchase cost summary">
+          <strong>Purchase cost summary</strong>
+          <div><span>Item invoices after discounts</span><b>{rupees(purchasePreview.invoiceTotal-feeInvoiceTotal)}</b></div>
+          <div><span>Fee invoices</span><b>{rupees(feeInvoiceTotal)}</b></div>
+          <div className="tax-total"><span>Received invoice total</span><b>{rupees(purchasePreview.invoiceTotal)}</b></div>
+          <div><span>Actual payment</span><b>{purchasePreview.hasActualPayment?rupees(purchasePreview.paid):'Not entered'}</b></div>
+          <div><span>Documented GST (included in invoice total)</span><b>{rupees(purchasePreview.tax)}</b></div>
+          {purchasePreview.hasActualPayment&&<div><span>{purchasePreview.status}</span>
+            <b>{rupees(purchasePreview.mismatch||purchasePreview.pending)}</b></div>}
+        </div>
+      </>}
+    </>}
+    {isTaxPage&&(!isPurchase||!hasProductInvoice&&!editingEntry)&&<div className="tax-summary">
+      <strong>{isPurchase?'Item GST estimate before discounts':'Automatic GST calculation'}</strong>
+      <div><span>Taxable value</span><b>{rupees(taxPreview.base)}</b></div>
+      <div><span>GST ({number(form.gstRate)}%)</span><b>{rupees(taxPreview.tax)}</b></div>
+      <div className="tax-total">
+        <span>{isPurchase?'Estimated item subtotal before discounts':'Customer total'}</span><b>{rupees(taxPreview.total)}</b>
+      </div>
+      <small>Check invoice and applicable GST rate. GST reporting and input tax credit eligibility require accountant review.</small>
+    </div>}
+    {page==='production'&&data.materials.map(m=><label key={m.id}>Consume {m.name} ({m.unit})
+      <input type="number" min="0" step="0.001" value={form['consume_'+m.id]||''}
+        onChange={e=>setForm({...form,['consume_'+m.id]:e.target.value})}/>
+    </label>)}
   </div>
-</>}{isTaxPage&&(!isPurchase||!hasProductInvoice)&&<div className="tax-summary"><strong>{isPurchase?'Item GST estimate before discounts':'Automatic GST calculation'}</strong><div><span>Taxable value</span><b>{rupees(taxPreview.base)}</b></div><div><span>GST ({number(form.gstRate)}%)</span><b>{rupees(taxPreview.tax)}</b></div><div className="tax-total"><span>{isPurchase?'Estimated item subtotal before discounts':'Customer total'}</span><b>{rupees(taxPreview.total)}</b></div><small>Check invoice and applicable GST rate. GST reporting and input tax credit eligibility require accountant review.</small></div>}{page==='production'&&data.materials.map(m=><label key={m.id}>Consume {m.name} ({m.unit})<input type="number" min="0" step="0.001" value={form['consume_'+m.id]||''} onChange={e=>setForm({...form,['consume_'+m.id]:e.target.value})}/></label>)}</div><div className="form-actions"><button className="primary" type="submit" disabled={saving||invoiceLines.some(line=>line.reading)}>{saving?'Saving...':'Save Entry'}</button><button type="button" onClick={()=>setAdding(false)}>Cancel</button></div></form>}{attachmentOpen&&<form className="entry-form" ref={attachmentForm} onSubmit={submitAttachment}>
+  {editingEntry&&editError&&<p className="invoice-status-error" role="alert">{editError}</p>}
+  <div className="form-actions">
+    <button className="primary" type="submit" disabled={saving||invoiceLines.some(line=>line.reading)}>
+      {saving?'Saving...':editingEntry?'Save Changes':'Save Entry'}
+    </button>
+    <button type="button" disabled={saving} onClick={()=>{setAdding(false);setEditingEntry(null)}}>Cancel</button>
+  </div>
+</form>}
+{attachmentOpen&&<form className="entry-form" ref={attachmentForm} onSubmit={submitAttachment}>
   <div className="form-heading"><h2>{attachment.supplierOnly?'Correct supplier name':'Add or verify invoices'}</h2>
     <p>{attachment.row.name||attachment.row.supplier||display(attachment.row,page==='purchases'?'productId':'materialId')} · {attachment.row.date}</p>
   </div>
@@ -510,6 +645,7 @@ return <div className="shell"><aside><h2>NAKHREBAAZ <small>SELLER HUB</small></h
       {hasEntryActions&&<td className="actions-cell"><div className="row-actions">
         {isPurchase&&<PurchaseInvoiceActions row={row} saving={saving} viewInvoice={viewInvoice}
           openAttachment={openAttachment} openAdvance={openAdvance} openEntry={()=>openEntry(row)}/>}
+        {canEditEntry&&<InvoiceAction icon={Pencil} label="Edit" disabled={saving} onClick={()=>openEditor(row)}/>}
         {page==='products'&&<>
           <InvoiceAction icon={Pencil} label="Edit" onClick={()=>setEditingProduct({...row})}/>
           <InvoiceAction icon={Boxes} label="Adjust Stock" onClick={()=>{setAdjustingProduct(row);setAdjustQty(String(number(stock[row.id])))}}/>
