@@ -678,3 +678,34 @@ test('fills and saves Amazon totals from the summary when item tax rows wrap', a
   await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
   expect(db.equipment_purchases[0].invoice_details[0]).toMatchObject({amount:590,gst:90,reference:'SPLIT-1'});
 });
+
+test('reads the Amazon PaperOne invoice when the totals and product cells use different text baselines', async ({page}) => {
+  const {db}=await useSellerApi(page);
+  await openPurchasePage(page,'Material Purchases');
+  await page.getByRole('button',{name:'+ Add Entry'}).click();
+  await page.getByRole('button',{name:'+ Add Invoice',exact:true}).click();
+  const actual=process.env.SELLER_TEST_AMAZON_PAPER_PDF;
+  const file=actual??{name:'paper.pdf',mimeType:'application/pdf',buffer:makePdf([
+    'Amazon Tax Invoice','Sold By: Example Supplier','Invoice Number: PAPER-1',
+    'Reusable Teflon Sheet for Heat Press','1',
+    'INR 406.78 INR 0.00 1 INR 406.78 18% IGST INR 73.22 INR 480.00',
+    'INR 83.90 -INR 83.90 INR 0.00 18% IGST INR 0.00 INR 0.00',
+    'TOTAL:','INR 73.22 INR 480.00',
+  ])};
+  await page.getByLabel('Invoice file').setInputFiles(file);
+  await expect(page.getByLabel('Invoice supplier',{exact:true})).toHaveValue(actual?'Krishna Enterprise':'Example Supplier');
+  await expect(page.getByLabel('Invoice number',{exact:true})).toHaveValue(actual?'CJB1-23076':'PAPER-1');
+  if (actual) await expect(page.getByLabel('Supplier GSTIN',{exact:true})).toHaveValue('33BRRPP3028G1ZO');
+  await expect(page.getByLabel('Product description',{exact:true})).toHaveValue(/Teflon Sheet/i);
+  await expect(page.getByLabel('Invoice quantity',{exact:true})).toHaveValue('1');
+  await expect(page.getByLabel('Invoice total (₹)',{exact:true})).toHaveValue('480');
+  await expect(page.getByLabel('Documented GST (₹)',{exact:true})).toHaveValue('73.22');
+  await page.getByRole('combobox',{name:'Category',exact:true}).selectOption('Other');
+  await page.getByRole('combobox',{name:'Unit',exact:true}).selectOption('pcs');
+  await page.getByLabel('Actual payment (₹)').fill('480');
+  await page.getByRole('checkbox',{name:'I verified the invoice details against the documents'}).check();
+  await page.getByRole('button',{name:'Save Entry'}).click();
+  await expect(page.locator('.invoice-status')).toContainText('Verified & matched');
+  expect(db.material_purchases[0]).toMatchObject({qty:1,rate:406.78,actual_payment:480,
+    invoice_details:[{amount:480,gst:73.22,discount:83.9}]});
+});
