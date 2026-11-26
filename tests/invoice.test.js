@@ -247,5 +247,6 @@ test('reads Amazon money cells after wrapped description and totals on a new bas
   const invoice=parseInvoice(text);
   assert.deepEqual([invoice.product,invoice.quantity,invoice.unitPrice,invoice.amount,invoice.gst,
     invoice.discount,invoice.productDiscount],['Reusable Teflon Sheet for Heat Press',1,406.78,480,73.22,83.90,0]);
+  assert.equal(parseInvoice(text.replaceAll('₹','INR ')).discount,83.9);
   assert.equal(parseInvoice(text.replace('TOTAL:\n₹73.22 ₹480.00','TOTAL:\n₹70.00 ₹480.00')).gst,null);
 });
