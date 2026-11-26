@@ -26,6 +26,18 @@ function amazonItems(text) {
     .filter(item => cents(item.net + item.gst) === cents(item.total));
 }
 
+function amazonTotals(text) {
+  const headings=text.split('\n').findIndex(line=>/\bTax\s+Amount\s+Total\s+Amount\b/i.test(line));
+  const wrappedHeadings=/^.*\bTax\s+Tax\s+Total\s*\n(?:[^\n]*\n){0,2}[^\n]*\bType\s+Amount\s+Amount\b/im.test(text);
+  if (headings<0&&!wrappedHeadings) return null;
+  const money = String.raw`(?:₹|INR|Rs\.?)[ \t]*(${numeric})`;
+  const row = new RegExp(String.raw`^[ \t]*TOTAL[ \t]*:?[ \t]+${money}[ \t]+${money}[ \t]*$`,'gim');
+  const pairs = [...new Set([...text.matchAll(row)].map(match=>match.slice(1).map(value).join('/')))];
+  if (pairs.length!==1) return null;
+  const [tax,total]=pairs[0].split('/').map(Number);
+  return tax>=0&&tax<=total?{tax,total}:null;
+}
+
 function amazonDiscountTable(text) {
   // Amazon may put the description on a different row from the numeric columns.
   const amount = `${currency}(${numeric})`;
@@ -50,9 +62,9 @@ function amazonDiscountTable(text) {
     return {price, discount:Math.abs(discount), quantity, net, gst, total, description};
   });
   const sum = key => rows.reduce((result, item) => result + cents(item[key]), 0);
-  if (!rows.length || sum('gst') !== cents(tax) || sum('total') !== cents(total)
-    || rows.some(item => cents(item.net + item.gst) !== cents(item.total)
+  if (!rows.length || rows.some(item => cents(item.net + item.gst) !== cents(item.total)
       || cents(item.price * (item.quantity ?? 1) - item.discount) !== cents(item.net))) return null;
+  if (sum('gst')!==cents(tax)||sum('total')!==cents(total)) return {conflict:true};
   return {tax, total, discount:sum('discount') / 100, products:rows.filter(item => item.quantity != null)};
 }
 
@@ -169,9 +181,12 @@ export function parseInvoice(raw, sellerColumn = '') {
     ? text.match(/\bOD\d{10,}\b/i)?.[0] ?? (/\d/.test(labeledOrder) ? labeledOrder : '')
     : labeledOrder;
   const service = serviceInvoiceTable(text);
-  const amazonTable = platform === 'Amazon' ? amazonDiscountTable(text) : null;
+  const amazonRead = platform === 'Amazon' ? amazonDiscountTable(text) : null;
+  const amazonTable = amazonRead?.conflict ? null : amazonRead;
+  const amazonSummary = platform === 'Amazon' && !amazonRead?.conflict ? amazonTable ?? amazonTotals(text) : null;
   const amount = findAmount(text, String.raw`Grand[ \t]+Total|Invoice[ \t]+(?:Total|Amount)|Bill[ \t]+Total|Net[ \t]+Payable|Total[ \t]+Invoice[ \t]+(?:Amount|Value)|Total[ \t]+Payable|Amount[ \t]+Payable`)
-    ?? findAmount(text, String.raw`Total[ \t]+Amount(?:[ \t]+(?:Including|Incl\.?)\s*GST)?|Total`) ?? amazonTable?.total ?? service?.total ?? null;
+    ?? amazonSummary?.total
+    ?? findAmount(text, String.raw`Total[ \t]+Amount(?:[ \t]+(?:Including|Incl\.?)\s*GST)?|Total`) ?? service?.total ?? null;
   const taxable = findAmount(text, String.raw`(?:Total[ \t]+)?(?:Taxable[ \t]+(?:Amount|Value)|Subtotal(?:[ \t]+before[ \t]+tax)?)`);
   const totalGst = findAmount(text, String.raw`(?:Total[ \t]+(?:GST|Tax)(?:[ \t]+Amount)?|GST[ \t]+Amount)`);
   const parts = ['CGST', '[SU]GST|UTGST', 'IGST'].map(label =>
@@ -195,8 +210,9 @@ export function parseInvoice(raw, sellerColumn = '') {
   const amazon = platform === 'Amazon' ? amazonTable?.products ?? amazonItems(text) : [];
   const amazonGst = amazon.length && amount != null && amazon.reduce((sum, item) => sum + cents(item.total), 0) === cents(amount)
     ? amazon.reduce((sum, item) => sum + cents(item.gst), 0) / 100 : null;
-  const declaredGst = totalGst ?? (service?.total === amount ? service.gst : null) ?? totalRow?.[4] ?? componentGst ?? (amazonTable?.total === amount ? amazonTable.tax : null) ?? amazonGst;
+  const declaredGst = totalGst ?? (service?.total === amount ? service.gst : null) ?? totalRow?.[4] ?? (amazonSummary?.total === amount ? amazonSummary.tax : null) ?? componentGst ?? amazonGst;
   const gst = declaredGst != null && amount != null && declaredGst >= 0 && declaredGst <= amount
+    && (amazonSummary == null || (amazonSummary.total === amount && cents(amazonSummary.tax) === cents(declaredGst)))
     && (taxable == null || Math.abs(cents(taxable + declaredGst) - cents(amount)) <= 1)
     && (totalGst == null || componentGst == null || Math.abs(cents(totalGst) - cents(componentGst)) <= 1)
     ? cents(declaredGst) / 100 : null;

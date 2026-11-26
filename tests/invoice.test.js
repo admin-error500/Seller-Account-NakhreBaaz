@@ -221,3 +221,17 @@ test('reads split CGST and SGST goods invoices without mistaking quantity for to
     invoice.amount,invoice.gst,invoice.gstRate],['Example Equipment LLP','APV/26-27/R6040','27ABCDE1234F1Z5','Heat Press Machine',1,10000,11800,1800,18]);
   assert.equal(parseInvoice(text.replace('INR 11,800.00','INR 11,900.00')).amount,null);
 });
+
+test('reads Amazon tax and grand total even when the item table has wrapped and split tax columns', () => {
+  const raw=[
+    'Amazon Tax Invoice','Sold By: Example Seller','Invoice Number: TEST-1','Order Number: 402-1234567-1123456',
+    'Description Unit Price Quantity Net Amount Tax Rate Tax Type Tax Amount Total Amount',
+    '1 Printer Consumable','₹500.00 1 ₹500.00 9% CGST ₹45.00','9% SGST ₹45.00 ₹590.00',
+    'TOTAL: ₹90.00 ₹590.00',
+  ].join('\n');
+  const invoice=parseInvoice(raw);
+  assert.deepEqual([invoice.supplier,invoice.reference,invoice.amount,invoice.gst,invoice.gstRate],
+    ['Example Seller','TEST-1',590,90,18]);
+  assert.equal(parseInvoice(raw+'\nTOTAL: ₹91.00 ₹591.00').amount,null);
+  assert.equal(parseInvoice(raw+'\nInvoice Total: ₹600.00').gst,null);
+});
