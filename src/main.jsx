@@ -38,7 +38,10 @@ const fieldLabel=k=>fieldLabels[k]||k.replace(/([A-Z])/g,' $1').replace(/^./,c=>
 const today=()=>new Date().toISOString().slice(0,10);
 const rupees=(n,maxFractionDigits=2)=>'₹'+(Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:maxFractionDigits});
 function BrandWordmark() {
-  return <img className="brand-wordmark" src={brandLogo} width={190} height={72} alt="NakhreBaaz"/>;
+  return <div className="brand-logo">
+    <img className="brand-wordmark" src={brandLogo} width={2022} height={778} alt="NakhreBaaz"/>
+    <span className="brand-tagline">Wear your nakhra</span>
+  </div>;
 }
 
 function InvoiceStatus({row}) {
@@ -490,10 +493,7 @@ const entryNav=(key,label)=><button key={key} className={page===key?'active':''}
   aria-current={page===key?'page':undefined}
   onClick={()=>{setPage(key);selection.clear();setOpenEntryId(null);setAdding(false);setEditingEntry(null);setAttachment(null);setAdvanceTarget(null);setMessage('')}}>{label}</button>;
 return <div className="shell"><aside className="sidebar">
-  <div className="sidebar-brand">
-    <BrandWordmark/>
-    <span>Seller Hub</span>
-  </div>
+  <BrandWordmark/>
   <nav aria-label="Seller Hub">
   {entryNav('overview','Overview')}
   {Object.entries(schemas).filter(([key])=>key!=='materials').map(([key,entry])=>

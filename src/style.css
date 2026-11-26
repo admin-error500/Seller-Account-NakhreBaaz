@@ -54,26 +54,27 @@ button.primary:disabled {opacity: .62; cursor: not-allowed}
   background: var(--sidebar);
   color: var(--sidebar-text);
 }
-.sidebar-brand {
+.brand-logo {
   display: grid;
   justify-items: center;
-  gap: 5px;
-  padding: 11px 10px 12px;
+  color: #fffaf0;
+}
+.sidebar .brand-logo {
+  padding-block: 4px 10px;
   margin-bottom: 6px;
-  background: #fffaf0;
-  color: var(--ink);
-  border-radius: 12px;
 }
 .brand-wordmark {
   display: block;
   max-width: 100%;
   height: auto;
+  margin-block-end: -3.5%;
+  /* Hide the embedded tagline while retaining the full wordmark and smile. */
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 72% 100%, 72% 73.4%, 70.3% 69.9%, 68.25% 68%, 0 68%);
 }
-.sidebar-brand span {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .15em;
-  text-transform: uppercase;
+.brand-tagline {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .04em;
 }
 .sidebar :focus-visible {outline-color: var(--amber)}
 .sidebar nav {display: grid; gap: 4px}
@@ -177,15 +178,17 @@ td {color: var(--ink)}
 }
 .login-panel {
   width: min(100%, 420px);
+}
+.login-panel .brand-logo {width: min(100%, 340px); margin-inline: auto}
+.login-panel h1 {margin: 14px 0 18px; text-align: center; font-size: 24px; color: #fffaf0}
+.login-panel form {
+  display: grid;
+  gap: 16px;
   padding: clamp(20px, 6vw, 32px);
   border-radius: 16px;
   border-top: 4px solid var(--amber);
-  background: var(--surface);
   box-shadow: 0 18px 42px #100a0542;
 }
-.login-panel .brand-wordmark {margin-inline: auto}
-.login-panel h1 {margin: 12px 0 22px; text-align: center; font-size: 24px}
-.login-panel form {display: grid; gap: 16px; padding: 0; border: 0; box-shadow: none}
 .login-panel button {margin: 4px 0 0; min-height: 44px}
 .login-panel [role=alert] {margin: 0; color: #b42318}
 
@@ -202,8 +205,8 @@ td {color: var(--ink)}
     gap: 10px;
     padding: 12px 16px;
   }
-  .sidebar-brand {width: min(100%, 160px); margin: 0; gap: 3px; padding: 6px 9px}
-  .sidebar-brand span {font-size: 9px}
+  .sidebar .brand-logo {width: min(100%, 182px); margin: 0; padding-block: 0}
+  .sidebar .brand-tagline {font-size: 11px}
   .sidebar .sign-out {grid-column: 2; grid-row: 1; min-height: 44px}
   .sidebar nav {
     grid-column: 1 / -1;
