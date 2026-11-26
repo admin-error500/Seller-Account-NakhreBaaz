@@ -28,6 +28,19 @@ function pdfText(items) {
     .map(([, items]) => items.sort(([a], [b]) => a - b).map(([, content]) => content).join(' ')).join('\n');
 }
 
+function pdfRowsByBaseline(items) {
+  const parts=items.filter(item=>item.str?.trim())
+    .map(item=>({text:item.str,x:item.transform[4],y:item.transform[5]}))
+    .sort((a,b)=>b.y-a.y);
+  const rows=[];
+  for (const part of parts) {
+    const last=rows.at(-1);
+    if (last&&last.y-part.y<=2.6) last.parts.push(part);
+    else rows.push({y:part.y,parts:[part]});
+  }
+  return rows.map(row=>row.parts.sort((a,b)=>a.x-b.x).map(part=>part.text).join(' ')).join('\n');
+}
+
 function sellerColumnText(items) {
   const seller = items.find(item => /^sold[ \t]+by\s*:/i.test(item.str?.trim()));
   if (!seller) return '';
@@ -38,8 +51,8 @@ function sellerColumnText(items) {
   const right = (x + billing.transform[4]) / 2;
   return pdfText(items.filter(item => {
     const [, , , , left, baseline] = item.transform;
-    return left >= x-3 && left < right && baseline <= y+3 && baseline >= y-130;
-  }));
+    return left >= x-3 && left < right && baseline <= y+3 && baseline >= y-205;
+  })).split(/\n[ \t]*(?:Bill(?:ing)?[ \t]+(?:To|Address)|Ship(?:ping)?[ \t]+(?:To|Address)|Order[ \t]+(?:No|Number|Date))\b/i)[0];
 }
 
 function withTimeout(promise, milliseconds) {
@@ -95,17 +108,22 @@ export async function readInvoice(file) {
         try { ({items}=await page.getTextContent()); } catch { /* The page may still render for OCR. */ }
         const content=pdfText(items);
         sellerColumn ||= sellerColumnText(items);
-        pages.push({page,content,scanned:(content.match(/[A-Za-z0-9]/g)?.length??0)<50});
+        pages.push({page,content,baseline:pdfRowsByBaseline(items),scanned:(content.match(/[A-Za-z0-9]/g)?.length??0)<50});
       }
       const parse=()=>parseInvoice(pages.map(page=>page.ocr||page.content).join('\n'),sellerColumn);
       let extracted=parse();
       if (extracted.documentType==='quotation') return extracted;
+      if (missingInvoiceFields(extracted).length) {
+        const positioned=parseInvoice(pages.map(page=>page.baseline).join('\n'),sellerColumn);
+        extracted=mergeInvoiceReads(extracted,positioned);
+      }
       async function tryPage(entry) {
         if (ocrError) return;
         try {
           entry.ocr=await renderForOcr(entry.page,recognize);
         } catch { /* Keep any fields already extracted and allow manual entry. */ }
       }
+      if (extracted.documentType==='quotation') return extracted;
       for (const page of pages.filter(entry=>entry.scanned)) await tryPage(page);
       extracted=mergeInvoiceReads(extracted,parse());
       if (extracted.documentType!=='quotation'&&missingInvoiceFields(extracted).length&&!ocrError) {

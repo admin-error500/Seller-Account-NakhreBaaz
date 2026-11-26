@@ -31,7 +31,7 @@ function amazonTotals(text) {
   const wrappedHeadings=/^.*\bTax\s+Tax\s+Total\s*\n(?:[^\n]*\n){0,2}[^\n]*\bType\s+Amount\s+Amount\b/im.test(text);
   if (headings<0&&!wrappedHeadings) return null;
   const money = String.raw`(?:₹|INR|Rs\.?)[ \t]*(${numeric})`;
-  const row = new RegExp(String.raw`^[ \t]*TOTAL[ \t]*:?[ \t]+${money}[ \t]+${money}[ \t]*$`,'gim');
+  const row = new RegExp(String.raw`^[ \t]*TOTAL(?:[ \t]*:[ \t]*(?:\n[ \t]*)?|[ \t]+)${money}[ \t]+${money}[ \t]*$`,'gim');
   const pairs = [...new Set([...text.matchAll(row)].map(match=>match.slice(1).map(value).join('/')))];
   if (pairs.length!==1) return null;
   const [tax,total]=pairs[0].split('/').map(Number);
@@ -42,8 +42,8 @@ function amazonDiscountTable(text) {
   // Amazon may put the description on a different row from the numeric columns.
   const amount = `${currency}(${numeric})`;
   const gap = String.raw`[ \t]+`;
-  const row = new RegExp(String.raw`^[ \t]*${amount}${gap}${amount}(?:${gap}(\d+(?:\.\d+)?))?${gap}${amount}${gap}\d+(?:\.\d+)?[ \t]*%${gap}(?:IGST|CGST|SGST|UTGST)${gap}${amount}${gap}${amount}[ \t]*$`, 'gim');
-  const totals = [...text.matchAll(new RegExp(String.raw`^[ \t]*TOTAL[ \t]*:[ \t]*${amount}${gap}${amount}[ \t]*$`, 'gim'))];
+  const row = new RegExp(String.raw`^[ \t]*(?:(?!(?:INR|Rs)\b)[A-Z][^₹\n]*?[ \t]+(?=(?:₹|INR\b|Rs\.?)[ \t]*\d))?${amount}${gap}${amount}(?:${gap}(\d+(?:\.\d+)?))?${gap}${amount}${gap}\d+(?:\.\d+)?[ \t]*%${gap}(?:IGST|CGST|SGST|UTGST)${gap}${amount}${gap}${amount}[ \t]*$`, 'gim');
+  const totals = [...text.matchAll(new RegExp(String.raw`^[ \t]*TOTAL[ \t]*:[ \t]*(?:\n[ \t]*)?${amount}${gap}${amount}[ \t]*$`, 'gim'))];
   if (totals.length !== 1) return null;
   const [tax, total] = totals[0].slice(1).map(value);
   let itemNumber = 0;
@@ -167,7 +167,7 @@ export function parseInvoice(raw, sellerColumn = '') {
   }
   const offline = offlineTaxInvoice(text);
   if (offline) return offline;
-  text = text.replace(/-[ \t]*₹/g, '₹-');
+  text = text.replace(/-[ \t]*(₹|INR\b|Rs\.?)(?=[ \t]*\d)/gi, '$1-');
   const reference = findText(text, String.raw`Invoice[ \t]*(?:Number|No\.?|#|ID|Reference|Ref\.?)|Bill[ \t]*(?:No\.?|Number)|Tax Invoice(?=[ \t]*:)`, id);
   const goods=splitTaxGoodsInvoice(text);
   if (goods&&reference) return {...goods,reference,kind:'Product',platform:'Direct',reviewRequired:true};

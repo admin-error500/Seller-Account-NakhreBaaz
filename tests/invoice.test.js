@@ -235,3 +235,18 @@ test('reads Amazon tax and grand total even when the item table has wrapped and 
   assert.equal(parseInvoice(raw+'\nTOTAL: ₹91.00 ₹591.00').amount,null);
   assert.equal(parseInvoice(raw+'\nInvoice Total: ₹600.00').gst,null);
 });
+
+test('reads Amazon money cells after wrapped description and totals on a new baseline', () => {
+  const text=[
+    'Amazon Tax Invoice', 'Sold By: Example Supplier', 'Invoice Number: AMZ-12',
+    'Reusable Teflon Sheet for Heat Press', '1',
+    'More product description ₹406.78 ₹0.00 1 ₹406.78 18% IGST ₹73.22 ₹480.00',
+    'Shipping Charges', '₹83.90 -₹83.90 ₹0.00 18% IGST ₹0.00 ₹0.00',
+    'TOTAL:', '₹73.22 ₹480.00',
+  ].join('\n');
+  const invoice=parseInvoice(text);
+  assert.deepEqual([invoice.product,invoice.quantity,invoice.unitPrice,invoice.amount,invoice.gst,
+    invoice.discount,invoice.productDiscount],['Reusable Teflon Sheet for Heat Press',1,406.78,480,73.22,83.90,0]);
+  assert.equal(parseInvoice(text.replaceAll('₹','INR ')).discount,83.9);
+  assert.equal(parseInvoice(text.replace('TOTAL:\n₹73.22 ₹480.00','TOTAL:\n₹70.00 ₹480.00')).gst,null);
+});
