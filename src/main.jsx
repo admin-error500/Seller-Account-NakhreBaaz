@@ -38,10 +38,8 @@ const fieldLabel=k=>fieldLabels[k]||k.replace(/([A-Z])/g,' $1').replace(/^./,c=>
 const today=()=>new Date().toISOString().slice(0,10);
 const rupees=(n,maxFractionDigits=2)=>'₹'+(Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:maxFractionDigits});
 function BrandWordmark() {
-  return <div className="brand-logo">
-    <img className="brand-wordmark" src={brandLogo} width={2022} height={778} alt="NakhreBaaz"/>
-    <span className="brand-tagline">Wear your nakhra</span>
-  </div>;
+  return <img className="brand-wordmark" src={brandLogo} width={2022} height={778}
+    alt="NakhreBaaz. Wear your nakhra."/>;
 }
 
 function InvoiceStatus({row}) {

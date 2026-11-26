@@ -54,28 +54,12 @@ button.primary:disabled {opacity: .62; cursor: not-allowed}
   background: var(--sidebar);
   color: var(--sidebar-text);
 }
-.brand-logo {
-  display: grid;
-  justify-items: center;
-  color: #fffaf0;
-}
-.sidebar .brand-logo {
-  padding-block: 4px 10px;
-  margin-bottom: 6px;
-}
 .brand-wordmark {
   display: block;
   max-width: 100%;
   height: auto;
-  margin-block-end: -3.5%;
-  /* Hide the embedded tagline while retaining the full wordmark and smile. */
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 72% 100%, 72% 73.4%, 70.3% 69.9%, 68.25% 68%, 0 68%);
 }
-.brand-tagline {
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: .04em;
-}
+.sidebar .brand-wordmark {margin-block: 4px 16px}
 .sidebar :focus-visible {outline-color: var(--amber)}
 .sidebar nav {display: grid; gap: 4px}
 .sidebar :is(nav button, .purchase-nav summary) {
@@ -179,7 +163,7 @@ td {color: var(--ink)}
 .login-panel {
   width: min(100%, 420px);
 }
-.login-panel .brand-logo {width: min(100%, 340px); margin-inline: auto}
+.login-panel .brand-wordmark {width: min(100%, 340px); margin-inline: auto}
 .login-panel h1 {margin: 14px 0 18px; text-align: center; font-size: 24px; color: #fffaf0}
 .login-panel form {
   display: grid;
@@ -205,8 +189,7 @@ td {color: var(--ink)}
     gap: 10px;
     padding: 12px 16px;
   }
-  .sidebar .brand-logo {width: min(100%, 182px); margin: 0; padding-block: 0}
-  .sidebar .brand-tagline {font-size: 11px}
+  .sidebar .brand-wordmark {width: min(100%, 194px); margin: 0}
   .sidebar .sign-out {grid-column: 2; grid-row: 1; min-height: 44px}
   .sidebar nav {
     grid-column: 1 / -1;
